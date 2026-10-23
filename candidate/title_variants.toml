@@ -7,7 +7,7 @@
 # and review the matched titles with:
 #     uv run turing-projects-v2 review-titles
 #
-# STATUS: draft, waiting for the candidate's review.
+# STATUS: reviewed by the candidate on 2026-10-23 (1,108 postings tagged).
 
 [[role]]
 name = "Quantum Software Developer"
@@ -28,12 +28,34 @@ include = [
     "sponsored research",
     "pre-award",
     "post-award",
+    "proposal manager",
+    "proposal management",
+    "proposal writer",
+    "proposal coordinator",
+    "proposal specialist",
+    "proposal analyst",
+    "fundraising",
+    "director of development",
+    "development director",
+    "development officer",
+    "major gift",
+    "major gifts",
+    "philanthropy",
+    "philanthropic",
+    "donor relations",
 ]
 exclude = [
     "grants pass",        # a town in Oregon
     "grant grove",        # a place name
     "grant funded",       # grant-funded social-work jobs
+    "grant-funded",
     "payment collector",
+    "grant writer",       # candidate: writing grants is not grant management
+    "grants writer",
+    "grant writing",
+    "grants writing",
+    "accountant",         # candidate: grant accounting is out
+    "volunteer",          # candidate: no unpaid posts
 ]
 
 [[role]]
@@ -55,7 +77,11 @@ include = [
     "ai transformation",
     "emerging technologies",
 ]
-exclude = []
+exclude = [
+    "brand",              # candidate: AI/tech innovation only, not consumer-brand innovation
+    "technologies engineer",  # "Emerging Technologies Engineer" is not a management role
+    "it advisor",
+]
 
 [[role]]
 name = "AI Engineer"
@@ -87,6 +113,11 @@ include = [
     "ai solutions",
     "ai programmer",
     "data scientist",
+    "data science",
+    "research scientist",
+    "applied scientist",
+    "analytics engineer",
+    "statistician",
 ]
 exclude = [
     "ai content writer",
