@@ -10,9 +10,11 @@ from tqdm import tqdm
 from turing_projects_v2.config import Settings, load_settings
 from turing_projects_v2.errors import AppError
 from turing_projects_v2.importer import import_kaggle
+from turing_projects_v2.llm import chat_model
 from turing_projects_v2.profile import load_profile
 from turing_projects_v2.rag.embeddings import EMBEDDING_MODELS, load_embedder
-from turing_projects_v2.rag.indexer import index_knowledge_base, open_collection
+from turing_projects_v2.rag.indexer import NOT_STATED, index_knowledge_base, open_collection
+from turing_projects_v2.rag.retriever import search_jobs
 from turing_projects_v2.store import JobStore
 from turing_projects_v2.tagging import load_title_variants, tag_postings
 
@@ -74,23 +76,57 @@ def index(settings: Settings) -> None:
         )
 
 
-COMMANDS: dict[str, Callable[[Settings], None]] = {
+def search(settings: Settings, question: str, embedding_model: str | None) -> None:
+    """search the Knowledge Base the way the chatbot does"""
+    embedding_model = embedding_model or settings.embedding_model
+    embedder = load_embedder(embedding_model)  # first: an unknown name must not create a collection
+    outcome = search_jobs(
+        question,
+        chat_model(settings, settings.agent_model),
+        open_collection(settings.chroma_dir, embedding_model),
+        embedder,
+    )
+    trace = outcome.trace
+    print(f"Search text: {trace.search_text}")
+    print(f"Filters: {trace.filters.model_dump(exclude_none=True) or 'none'}")
+    for stage in trace.queries:
+        print(f"  query '{stage.query}': {len(stage.job_ids)} postings")
+    print(f"\n{outcome.message}")
+    for result in outcome.results:
+        print(
+            f"#{result.number} {result.title} at {result.company or NOT_STATED} "
+            f"({result.location or NOT_STATED}, {result.work_type or NOT_STATED}) {result.url}"
+        )
+
+
+COMMANDS: dict[str, Callable[..., None]] = {
     "check": check,
     "import-data": import_data,
     "tag": tag,
     "review-titles": review_titles,
     "index": index,
+    "search": search,
 }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="turing-projects-v2")
     subparsers = parser.add_subparsers(dest="command")
-    for name, command in COMMANDS.items():
-        subparsers.add_parser(name, help=command.__doc__)
-    name = parser.parse_args().command or "check"
+    parsers = {
+        name: subparsers.add_parser(name, help=command.__doc__)
+        for name, command in COMMANDS.items()
+    }
+    parsers["search"].add_argument("question", help="what kind of job you are looking for")
+    parsers["search"].add_argument(
+        "--model",
+        dest="embedding_model",
+        choices=EMBEDDING_MODELS,
+        help="embedding model; default from settings",
+    )
+    options = vars(parser.parse_args())
+    name = options.pop("command") or "check"
     try:
-        COMMANDS[name](load_settings())
+        COMMANDS[name](load_settings(), **options)
     except AppError as error:
         sys.exit(f"{name} failed: {error}")
 

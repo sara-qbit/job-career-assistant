@@ -20,8 +20,8 @@ from turing_projects_v2.judge import Verdict
 class FakeChatModel(BaseChatModel):
     """Chat model that returns scripted responses in order and records every call.
 
-    A response may be a string, an AIMessage (e.g. with tool calls), or a Pydantic
-    object returned from `with_structured_output`.
+    A response may be a string, an AIMessage (e.g. with tool calls), a Pydantic
+    object returned from `with_structured_output`, or an exception, which is raised.
     """
 
     responses: list[Any]
@@ -60,6 +60,8 @@ class FakeChatModel(BaseChatModel):
         self._calls.append(messages)
         response = self.responses[self._next_index]
         self._next_index += 1
+        if isinstance(response, Exception):
+            raise response
         return response
 
 
