@@ -9,6 +9,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from turing_projects_v2.judge import Verdict
+
 # Kaggle postings.csv columns with their SQLite types. Type affinity turns "2774458.0" into 2774458.
 POSTING_COLUMNS = {
     "job_id": "INTEGER PRIMARY KEY",
@@ -80,6 +82,27 @@ class JobPosting(BaseModel):
     target_role: str | None
 
 
+class Company(BaseModel):
+    """One company as imported."""
+
+    company_id: int
+    description: str | None
+
+
+class JobInfo(BaseModel):
+    """The structured summary of one Job Posting, with the judge's verdicts on its summaries."""
+
+    job_id: int
+    job_name: str
+    company_name: str | None
+    work_type: str | None
+    role_summary: str
+    company_vision: str
+    role_summary_verdict: Verdict | None
+    """The judge's verdict on the role summary; None when there was nothing to check."""
+    company_vision_verdict: Verdict | None
+
+
 class TokenUsage(BaseModel):
     """Tokens used by one LLM call; cost in USD, None when the provider did not report it."""
 
@@ -111,6 +134,14 @@ class JobStore:
             self._db.execute(f"CREATE TABLE IF NOT EXISTS companies ({company_columns})")
             self._db.execute(
                 "CREATE INDEX IF NOT EXISTS postings_target_role ON postings (target_role)"
+            )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS job_info ("
+                "job_id INTEGER PRIMARY KEY REFERENCES postings (job_id), job_name TEXT NOT NULL, "
+                "company_name TEXT, work_type TEXT, role_summary TEXT NOT NULL, "
+                "company_vision TEXT NOT NULL, role_summary_verdict TEXT, "
+                "role_summary_reason TEXT, company_vision_verdict TEXT, "
+                "company_vision_reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS token_usage ("
@@ -197,6 +228,49 @@ class JobStore:
     def get_posting(self, job_id: int) -> JobPosting | None:
         row = self._db.execute("SELECT * FROM postings WHERE job_id = ?", (job_id,)).fetchone()
         return JobPosting.model_validate(dict(row)) if row else None
+
+    def get_company(self, company_id: int) -> Company | None:
+        row = self._db.execute(
+            "SELECT company_id, description FROM companies WHERE company_id = ?",
+            (company_id,),
+        ).fetchone()
+        return Company.model_validate(dict(row)) if row else None
+
+    def save_job_info(self, info: JobInfo) -> None:
+        """Save the Job Info of its posting, replacing an earlier one."""
+        verdicts = (info.role_summary_verdict, info.company_vision_verdict)
+        with self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO job_info (job_id, job_name, company_name, work_type, "
+                "role_summary, company_vision, role_summary_verdict, role_summary_reason, "
+                "company_vision_verdict, company_vision_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    info.job_id,
+                    info.job_name,
+                    info.company_name,
+                    info.work_type,
+                    info.role_summary,
+                    info.company_vision,
+                    *(
+                        value
+                        for verdict in verdicts
+                        for value in ((verdict.value, verdict.reason) if verdict else (None, None))
+                    ),
+                ),
+            )
+
+    def get_job_info(self, job_id: int) -> JobInfo | None:
+        row = self._db.execute("SELECT * FROM job_info WHERE job_id = ?", (job_id,)).fetchone()
+        if row is None:
+            return None
+        fields = dict(row)
+        for name in ("role_summary", "company_vision"):
+            value, reason = fields.pop(f"{name}_verdict"), fields.pop(f"{name}_reason")
+            fields[f"{name}_verdict"] = (
+                Verdict(value=value, reason=reason) if value is not None else None
+            )
+        return JobInfo.model_validate(fields)
 
     def record_token_usage(self, usage: TokenUsage) -> None:
         with self._db:

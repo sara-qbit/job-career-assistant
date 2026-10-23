@@ -62,7 +62,7 @@ class ConversationMemoryMiddleware(AgentMiddleware[ConversationState]):
         name = request.tool_call["name"]
         if name == "search_jobs" and result.artifact is not None:
             update = {"search_results": result.artifact["results"]}
-        elif name == "get_job_description":
+        elif name in ("get_job_description", "create_job_info"):
             update = {"current_job_id": request.tool_call["args"]["job_id"]}
         else:
             return result

@@ -13,13 +13,17 @@ from turing_projects_v2.agent.chat import (
     CitationsEvent,
     ErrorEvent,
     JobDescriptionEvent,
+    JobInfoEvent,
     StatusEvent,
     TextEvent,
     ToolCallEvent,
     ToolResultEvent,
     UsageEvent,
 )
+from turing_projects_v2.job_info import NOT_STATED
+from turing_projects_v2.judge import Verdict
 from turing_projects_v2.rag.retriever import SearchResult
+from turing_projects_v2.store import JobInfo
 
 CITATION = re.compile(r"\[(\d+)\](?!\()")
 
@@ -33,8 +37,43 @@ def link_citations(text: str, citations: dict[int, SearchResult]) -> str:
             return match.group(0)
         return f'[\\[{result.number}\\]]({result.url} "{result.title}")'
 
-    # A "$" would start a LaTeX formula in Streamlit Markdown (salaries contain many).
-    return CITATION.sub(link, text.replace("$", r"\$"))
+    return CITATION.sub(link, escape_markdown(text))
+
+
+def escape_markdown(text: str) -> str:
+    """`text` for Streamlit Markdown: a "$" would start a LaTeX formula (salaries contain many)."""
+    return text.replace("$", r"\$")
+
+
+def show_job_info(info: JobInfo) -> None:
+    """The Job Info card: exact fields, then each summary with the judge's verdict."""
+    with st.container(border=True):
+        st.markdown(f"**Job Info: {escape_markdown(info.job_name)}**")
+        st.markdown(
+            f"**Company:** {escape_markdown(info.company_name or NOT_STATED)}  \n"
+            f"**Work type:** {escape_markdown(info.work_type or NOT_STATED)}"
+        )
+        st.caption("Job name, company and work type are copied exactly from the posting.")
+        summaries = [
+            ("Role summary", info.role_summary, info.role_summary_verdict),
+            ("Company vision", info.company_vision, info.company_vision_verdict),
+        ]
+        for name, summary, verdict in summaries:
+            st.markdown(f"**{name}:** {escape_markdown(summary)}")
+            show_verdict(verdict)
+
+
+def show_verdict(verdict: Verdict | None) -> None:
+    if verdict is None:
+        st.caption("Not checked: the source states nothing to summarise.")
+    elif verdict.value == "supported":
+        st.success(
+            f"Judge: supported. {escape_markdown(verdict.reason)}", icon=":material/check_circle:"
+        )
+    else:
+        st.warning(
+            f"Judge: fabricated. {escape_markdown(verdict.reason)}", icon=":material/warning:"
+        )
 
 
 class AnswerView:
@@ -81,6 +120,9 @@ class AnswerView:
                     # st.text would dedent and strip the text; st.code keeps it as stored
                     # (apart from one leading and one trailing newline).
                     st.code(description.text, language=None, wrap_lines=True)
+            case JobInfoEvent(info=info):
+                self._text_area = None
+                show_job_info(info)
             case UsageEvent(usage=usage):
                 self._tokens += usage.input_tokens + usage.output_tokens
                 if usage.cost is None:

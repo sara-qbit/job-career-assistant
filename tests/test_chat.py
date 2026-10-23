@@ -12,6 +12,7 @@ from turing_projects_v2.agent.chat import (
     CitationsEvent,
     ErrorEvent,
     JobDescriptionEvent,
+    JobInfoEvent,
     StatusEvent,
     TextEvent,
     ToolCallEvent,
@@ -20,8 +21,10 @@ from turing_projects_v2.agent.chat import (
 )
 from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.errors import ExternalAPIError
-from turing_projects_v2.fakes import FakeChatModel, FakeEmbedder
+from turing_projects_v2.fakes import FakeChatModel, FakeEmbedder, FakeJudge
 from turing_projects_v2.importer import import_kaggle
+from turing_projects_v2.job_info import JobSummaries
+from turing_projects_v2.judge import Verdict
 from turing_projects_v2.rag.indexer import index_knowledge_base, open_collection
 from turing_projects_v2.rag.retriever import QueryVariants, SearchQuery
 from turing_projects_v2.store import JobStore
@@ -63,11 +66,11 @@ def chat(tmp_path, store, responses):
     return chat_with(tmp_path, store, FakeChatModel(responses=responses))
 
 
-def chat_with(tmp_path, store, llm, **options):
+def chat_with(tmp_path, store, llm, judge=None, **options):
     embedder = FakeEmbedder()
     collection = open_collection(tmp_path / "chroma", "fake")
     index_knowledge_base(store, collection, embedder)
-    return ChatService(llm, store, collection, embedder, **options)
+    return ChatService(llm, store, collection, embedder, judge or FakeJudge(), **options)
 
 
 def of_kind(events, kind):
@@ -124,6 +127,33 @@ def test_job_description_reaches_the_llm_inside_a_data_block(tmp_path, store):
 
     tool_message = llm.calls[-1][-1]
     assert f"<job_posting_data>\n{DESCRIPTION}\n</job_posting_data>" in tool_message.text
+
+
+def test_job_info_is_shown_with_verdicts_and_becomes_the_current_job(tmp_path, store):
+    llm = FakeChatModel(
+        responses=[
+            call("create_job_info", {"job_id": 1}),
+            JobSummaries(role_summary="Builds LLM apps.", company_vision="Builds rockets."),
+            "Here is the Job Info.",
+        ]
+    )
+    judge = FakeJudge(
+        [
+            Verdict(value="supported", reason="LLM apps are named."),
+            Verdict(value="fabricated", reason="Made up."),
+        ]
+    )
+    service = chat_with(tmp_path, store, llm, judge)
+
+    events = list(service.send("c1", "tell me about job 1"))
+
+    assert of_kind(events, StatusEvent)[0].text.startswith("Creating the Job Info")
+    (shown,) = of_kind(events, JobInfoEvent)
+    assert (shown.info.job_name, shown.info.company_name) == ("Python LLM Engineer", "Acme Corp")
+    assert shown.info.role_summary_verdict.value == "supported"
+    assert shown.info.company_vision_verdict.reason == "Made up."
+    assert service.conversation("c1").current_job_id == 1
+    assert "<job_info_data>" in llm.calls[-1][-1].text
 
 
 def test_tool_error_is_returned_to_the_llm_and_answered_friendly(tmp_path, store):

@@ -24,16 +24,18 @@ from turing_projects_v2.agent.agent import build_agent
 from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.config import Settings
 from turing_projects_v2.errors import AppError, ExternalAPIError
+from turing_projects_v2.judge import Judge, open_judge
 from turing_projects_v2.llm import chat_model
 from turing_projects_v2.rag.embeddings import load_embedder
 from turing_projects_v2.rag.indexer import open_collection
 from turing_projects_v2.rag.retriever import SearchOutcome, SearchResult
-from turing_projects_v2.store import JobStore, TokenUsage
+from turing_projects_v2.store import JobInfo, JobStore, TokenUsage
 from turing_projects_v2.tools.jobs import JobDescription, job_tools
 
 TOOL_STATUS = {
     "search_jobs": "Searching the Knowledge Base",
     "get_job_description": "Fetching the Job Description",
+    "create_job_info": "Creating the Job Info and checking it",
 }
 
 
@@ -78,6 +80,11 @@ class JobDescriptionEvent(BaseModel):
     description: JobDescription
 
 
+class JobInfoEvent(BaseModel):
+    kind: Literal["job_info"] = "job_info"
+    info: JobInfo
+
+
 class UsageEvent(BaseModel):
     kind: Literal["usage"] = "usage"
     usage: TokenUsage
@@ -97,6 +104,7 @@ type AnswerEvent = Annotated[
     | ToolResultEvent
     | CitationsEvent
     | JobDescriptionEvent
+    | JobInfoEvent
     | UsageEvent
     | ErrorEvent,
     Field(discriminator="kind"),
@@ -126,6 +134,7 @@ class ChatService:
         store: JobStore,
         collection: Collection,
         embedder: Embeddings,
+        judge: Judge,
         *,
         checkpointer: BaseCheckpointSaver | None = None,
         history_window: int = 20,
@@ -135,7 +144,7 @@ class ChatService:
         self._store = store
         self._agent = build_agent(
             llm,
-            job_tools(store, llm, collection, embedder),
+            job_tools(store, llm, collection, embedder, judge),
             checkpointer or InMemorySaver(),
             history_window=history_window,
             max_tool_calls=max_tool_calls,
@@ -207,6 +216,7 @@ def open_chat_service(settings: Settings) -> ChatService:
         JobStore(settings.database_path),
         open_collection(settings.chroma_dir, settings.embedding_model),
         embedder,
+        open_judge(settings),
         checkpointer=open_checkpointer(settings.conversations_path),
         history_window=settings.history_window,
         max_tool_calls=settings.max_tool_calls,
@@ -245,6 +255,8 @@ def _update_events(message: Any) -> Iterator[AnswerEvent]:
             yield CitationsEvent(results=outcome.results)
         elif message.name == "get_job_description":
             yield JobDescriptionEvent(description=JobDescription.model_validate(message.artifact))
+        elif message.name == "create_job_info":
+            yield JobInfoEvent(info=JobInfo.model_validate(message.artifact))
 
 
 class _UsageRecorder(BaseCallbackHandler):
