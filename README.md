@@ -2,7 +2,7 @@
 
 A chatbot that finds job postings matching the candidate's Target Roles and writes a personalised cover letter for a chosen job, without inventing facts about the candidate. Built for the Turing College Sprint 2 project (LangChain, advanced RAG, tool calling, Streamlit).
 
-> **Status: v0.1.** Skeleton (v0.0) plus the import of all Kaggle Job Postings and companies into SQLite and Target Role tagging. Search, chat and letters follow in later versions.
+> **Status: v0.4 (part 1).** Import and Target Role tagging (v0.1), the Knowledge Base (v0.2), the advanced RAG Retriever (v0.3), and a first ChatGPT-style chat page whose agent can search jobs and show verbatim Job Descriptions. Memory, Job Info and letters follow in later versions.
 
 ## Install
 
@@ -34,6 +34,7 @@ uv run turing-projects-v2                 # check settings and the Candidate Pro
 uv run turing-projects-v2 import-data     # import all postings + companies into data/jobs.sqlite, then tag (~1 min)
 uv run turing-projects-v2 tag             # re-tag after editing candidate/title_variants.toml (~10 s)
 uv run turing-projects-v2 review-titles   # list the titles tagged per Target Role
+uv run turing-projects-v2 chat            # open the chatbot in the browser
 ```
 
 Re-running `import-data` is safe: postings and companies are updated by ID, never duplicated.
@@ -62,7 +63,11 @@ uv run ruff check . && uv run ruff format .
 | `src/turing_projects_v2/importer.py` | Kaggle CSV import |
 | `src/turing_projects_v2/tagging.py` | Target Role tagging from title variants |
 | `src/turing_projects_v2/store/` | SQLite data store |
-| `src/turing_projects_v2/rag/`, `tools/`, `agent/`, `ui/`, `evaluation/` | Later versions |
+| `src/turing_projects_v2/rag/` | Knowledge Base indexing and the Retriever |
+| `src/turing_projects_v2/tools/` | Agent tools (`search_jobs`, `get_job_description`) |
+| `src/turing_projects_v2/agent/` | The agent and the Chat service (one turn = a stream of answer events) |
+| `src/turing_projects_v2/ui/` | Streamlit app |
+| `src/turing_projects_v2/evaluation/` | Later versions |
 
 ## Data credit
 

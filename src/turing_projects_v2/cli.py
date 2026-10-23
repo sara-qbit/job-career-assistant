@@ -1,13 +1,14 @@
 """Command-line entry point: `uv run turing-projects-v2 <command>`."""
 
 import argparse
+import subprocess
 import sys
 import time
 from collections.abc import Callable
 
 from tqdm import tqdm
 
-from turing_projects_v2.config import Settings, load_settings
+from turing_projects_v2.config import PROJECT_ROOT, Settings, load_settings
 from turing_projects_v2.errors import AppError
 from turing_projects_v2.importer import import_kaggle
 from turing_projects_v2.llm import chat_model
@@ -99,6 +100,13 @@ def search(settings: Settings, question: str, embedding_model: str | None) -> No
         )
 
 
+def chat(settings: Settings) -> None:
+    """open the chatbot in the browser (Streamlit)"""
+    app = PROJECT_ROOT / "src" / "turing_projects_v2" / "ui" / "app.py"
+    # Run from the project root so that Streamlit reads .streamlit/config.toml.
+    subprocess.run([sys.executable, "-m", "streamlit", "run", str(app)], cwd=PROJECT_ROOT)
+
+
 COMMANDS: dict[str, Callable[..., None]] = {
     "check": check,
     "import-data": import_data,
@@ -106,6 +114,7 @@ COMMANDS: dict[str, Callable[..., None]] = {
     "review-titles": review_titles,
     "index": index,
     "search": search,
+    "chat": chat,
 }
 
 

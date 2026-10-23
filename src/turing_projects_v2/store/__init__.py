@@ -80,13 +80,24 @@ class JobPosting(BaseModel):
     target_role: str | None
 
 
+class TokenUsage(BaseModel):
+    """Tokens used by one LLM call; cost in USD, None when the provider did not report it."""
+
+    conversation_id: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost: float | None
+
+
 class JobStore:
     """SQLite repository. Pass ":memory:" for a throwaway store in tests."""
 
     def __init__(self, path: Path | str) -> None:
         if isinstance(path, Path):
             path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(path)
+        # The agent runs tools in worker threads and Streamlit reruns the page in new threads.
+        self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._create_schema()
 
@@ -100,6 +111,12 @@ class JobStore:
             self._db.execute(f"CREATE TABLE IF NOT EXISTS companies ({company_columns})")
             self._db.execute(
                 "CREATE INDEX IF NOT EXISTS postings_target_role ON postings (target_role)"
+            )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS token_usage ("
+                "id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, model TEXT NOT NULL, "
+                "input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cost REAL, "
+                "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
 
     def upsert_postings(self, rows: Iterable[Mapping[str, str | None]]) -> int:
@@ -180,3 +197,27 @@ class JobStore:
     def get_posting(self, job_id: int) -> JobPosting | None:
         row = self._db.execute("SELECT * FROM postings WHERE job_id = ?", (job_id,)).fetchone()
         return JobPosting.model_validate(dict(row)) if row else None
+
+    def record_token_usage(self, usage: TokenUsage) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT INTO token_usage "
+                "(conversation_id, model, input_tokens, output_tokens, cost) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    usage.conversation_id,
+                    usage.model,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.cost,
+                ),
+            )
+
+    def token_usage(self, conversation_id: str) -> list[TokenUsage]:
+        """Every recorded LLM call of the Conversation, oldest first."""
+        rows = self._db.execute(
+            "SELECT conversation_id, model, input_tokens, output_tokens, cost FROM token_usage "
+            "WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        ).fetchall()
+        return [TokenUsage.model_validate(dict(row)) for row in rows]
