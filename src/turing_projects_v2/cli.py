@@ -5,10 +5,14 @@ import sys
 import time
 from collections.abc import Callable
 
+from tqdm import tqdm
+
 from turing_projects_v2.config import Settings, load_settings
 from turing_projects_v2.errors import AppError
 from turing_projects_v2.importer import import_kaggle
 from turing_projects_v2.profile import load_profile
+from turing_projects_v2.rag.embeddings import EMBEDDING_MODELS, load_embedder
+from turing_projects_v2.rag.indexer import index_knowledge_base, open_collection
 from turing_projects_v2.store import JobStore
 from turing_projects_v2.tagging import load_title_variants, tag_postings
 
@@ -49,11 +53,33 @@ def review_titles(settings: Settings) -> None:
             print(f"{count:>4}  {title}")
 
 
+def index(settings: Settings) -> None:
+    """embed tagged postings not yet in the Knowledge Base, for every embedding model"""
+    store = JobStore(settings.database_path)
+    for model_name in EMBEDDING_MODELS:
+        print(f"\n## {model_name}")
+        embedder = load_embedder(model_name)
+        with tqdm(unit="posting") as bar:
+
+            def show(done: int, total: int, bar: tqdm = bar) -> None:
+                bar.total = total
+                bar.update(done - bar.n)
+
+            report = index_knowledge_base(
+                store, open_collection(settings.chroma_dir, model_name), embedder, show
+            )
+        print(
+            f"Indexed {report.indexed:,} postings ({report.chunks:,} chunks); "
+            f"{report.already_indexed:,} already indexed, {report.removed:,} removed."
+        )
+
+
 COMMANDS: dict[str, Callable[[Settings], None]] = {
     "check": check,
     "import-data": import_data,
     "tag": tag,
     "review-titles": review_titles,
+    "index": index,
 }
 
 

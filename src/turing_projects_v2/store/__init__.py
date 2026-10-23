@@ -170,6 +170,13 @@ class JobStore:
             result.setdefault(role, []).append((title, count))
         return result
 
+    def tagged_postings(self) -> list[JobPosting]:
+        """Every posting with a Target Role, in job ID order."""
+        rows = self._db.execute(
+            "SELECT * FROM postings WHERE target_role IS NOT NULL ORDER BY job_id"
+        ).fetchall()
+        return [JobPosting.model_validate(dict(row)) for row in rows]
+
     def get_posting(self, job_id: int) -> JobPosting | None:
         row = self._db.execute("SELECT * FROM postings WHERE job_id = ?", (job_id,)).fetchone()
         return JobPosting.model_validate(dict(row)) if row else None

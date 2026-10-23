@@ -64,12 +64,17 @@ class FakeChatModel(BaseChatModel):
 
 
 class FakeEmbedder(Embeddings):
-    """Embeds text to a fixed vector derived from its hash; equal texts get equal vectors."""
+    """Embeds text to a fixed vector derived from its hash; equal texts get equal vectors.
+
+    Records every document text it embeds in `embedded`.
+    """
 
     def __init__(self, dimensions: int = 8) -> None:
         self.dimensions = dimensions
+        self.embedded: list[str] = []
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.embedded.extend(texts)
         return [self.embed_query(text) for text in texts]
 
     def embed_query(self, text: str) -> list[float]:
