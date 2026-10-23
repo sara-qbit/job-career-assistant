@@ -21,9 +21,11 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini"
 
     data_dir: Path = PROJECT_ROOT / "data"
+    kaggle_dir: Path = PROJECT_ROOT / "data" / "raw" / "linkedin"
     database_path: Path = PROJECT_ROOT / "data" / "jobs.sqlite"
     chroma_dir: Path = PROJECT_ROOT / "data" / "chroma"
     candidate_dir: Path = PROJECT_ROOT / "candidate"
+    title_variants_path: Path = PROJECT_ROOT / "candidate" / "title_variants.toml"
 
     max_tool_calls: int = 6
     history_window: int = 20

@@ -1,0 +1,98 @@
+# Title variants per Target Role. Decides which Job Postings enter the Knowledge Base.
+#
+# A posting gets the FIRST role below that has an `include` phrase in its title and no
+# `exclude` phrase. Phrases match case-insensitively and as whole words only
+# ("ai" does not match "Maintenance"). After editing, re-tag with:
+#     uv run turing-projects-v2 tag
+# and review the matched titles with:
+#     uv run turing-projects-v2 review-titles
+#
+# STATUS: draft, waiting for the candidate's review.
+
+[[role]]
+name = "Quantum Software Developer"
+# Only "quantum" itself: "optimization" titles in this dataset are SEO / process jobs.
+include = ["quantum", "qiskit", "qubit", "qubits"]
+exclude = []
+
+[[role]]
+name = "Grant Management Specialist"
+include = [
+    "grant",
+    "grants",
+    "grants management",
+    "grant management",
+    "research administration",
+    "research administrator",
+    "sponsored programs",
+    "sponsored research",
+    "pre-award",
+    "post-award",
+]
+exclude = [
+    "grants pass",        # a town in Oregon
+    "grant grove",        # a place name
+    "grant funded",       # grant-funded social-work jobs
+    "payment collector",
+]
+
+[[role]]
+name = "AI Innovation Manager"
+include = [
+    "innovation manager",
+    "innovation management",
+    "innovation lead",
+    "innovation leader",
+    "innovation director",
+    "director of innovation",
+    "head of innovation",
+    "innovation office",
+    "chief ai officer",
+    "ai strategy",
+    "ai product manager",
+    "product manager (ai)",
+    "ai program manager",
+    "ai transformation",
+    "emerging technologies",
+]
+exclude = []
+
+[[role]]
+name = "AI Engineer"
+include = [
+    "ai engineer",
+    "ai engineers",
+    "artificial intelligence engineer",
+    "machine learning engineer",
+    "ml engineer",
+    "mle",
+    "mlops",
+    "ai/ml",
+    "ai developer",
+    "ai architect",
+    "ai specialist",
+    "artificial intelligence specialist",
+    "machine learning",
+    "deep learning",
+    "generative ai",
+    "genai",
+    "gen ai",
+    "llm",
+    "nlp",
+    "computer vision",
+    "applied ai",
+    "ai software",
+    "ai scientist",
+    "ai solution",
+    "ai solutions",
+    "ai programmer",
+    "data scientist",
+]
+exclude = [
+    "ai content writer",
+    "ai tutor",
+    "ai training",
+    "ai prompt creator",
+    "graphic designer",
+    "account executive",
+]
