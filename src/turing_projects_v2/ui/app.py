@@ -1,7 +1,8 @@
 """The Streamlit app: `uv run turing-projects-v2 chat`.
 
 MAIN is a ChatGPT-style page: the Conversation so far, the input at the bottom, and answers
-streamed with status lines while tools run.
+streamed with status lines while tools run. The Conversation ID is kept in the URL (`?c=…`), so
+reloading the page, also after an app restart, reopens the Conversation.
 """
 
 from uuid import uuid4
@@ -20,13 +21,30 @@ def chat_service() -> ChatService:
     return chat.open_chat_service(load_settings())
 
 
+def stored_messages(conversation_id: str) -> list[dict]:
+    """The page messages of a stored Conversation."""
+    try:
+        conversation = chat_service().conversation(conversation_id)
+    except AppError as error:
+        st.error(str(error))
+        return []
+    messages = []
+    for turn in conversation.turns:
+        messages.append({"role": "user", "text": turn.question})
+        messages.append({"role": "assistant", "events": turn.events})
+    return messages
+
+
 def main_page() -> None:
     st.title("Job Letter Assistant")
     st.caption("Describe the jobs you are looking for in your own words.")
     state = st.session_state
-    state.setdefault("conversation_id", uuid4().hex)
-    # Each message is {"role": "user", "text": ...} or {"role": "assistant", "events": [...]}.
-    state.setdefault("messages", [])
+    if "conversation_id" not in state:
+        reopened = st.query_params.get("c")
+        state.conversation_id = reopened or uuid4().hex
+        # Each message is {"role": "user", "text": ...} or {"role": "assistant", "events": [...]}.
+        state.messages = stored_messages(reopened) if reopened else []
+        st.query_params["c"] = state.conversation_id
 
     citations = {}  # the latest Search Results, which [n] markers refer to
     for message in state.messages:

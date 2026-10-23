@@ -10,3 +10,5 @@
 - [ ] Embedding dropdown with Gemini Embedding 2 preselected, Qwen3 and local MiniLM as alternatives
 - [ ] Local cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) re-scores the top ~20 after fusion; toggle on by default; scores added to the search trace
 - [ ] Seam-2/3 tests: reranker on/off changes order as scripted; model selection is passed through
+
+**Note from 07:** Conversations are stored only in the checkpointer (`data/conversations.sqlite`, thread ID = Conversation ID); the page reopens one via `?c=<id>`. The Conversations metadata rows (title, created, updated) the sidebar needs are not written yet.

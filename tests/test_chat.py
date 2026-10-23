@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from tests.kaggle_fixture import posting, write_kaggle_dataset
+from turing_projects_v2.agent.agent import TOOL_CALL_CAP_ANSWER
 from turing_projects_v2.agent.chat import (
     ChatService,
     CitationsEvent,
@@ -17,6 +18,7 @@ from turing_projects_v2.agent.chat import (
     ToolResultEvent,
     UsageEvent,
 )
+from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.errors import ExternalAPIError
 from turing_projects_v2.fakes import FakeChatModel, FakeEmbedder
 from turing_projects_v2.importer import import_kaggle
@@ -61,11 +63,11 @@ def chat(tmp_path, store, responses):
     return chat_with(tmp_path, store, FakeChatModel(responses=responses))
 
 
-def chat_with(tmp_path, store, llm):
+def chat_with(tmp_path, store, llm, **options):
     embedder = FakeEmbedder()
     collection = open_collection(tmp_path / "chroma", "fake")
     index_knowledge_base(store, collection, embedder)
-    return ChatService(llm, store, collection, embedder)
+    return ChatService(llm, store, collection, embedder, **options)
 
 
 def of_kind(events, kind):
@@ -226,3 +228,88 @@ def test_follow_up_turn_sees_the_earlier_turn(tmp_path, store):
     sent = [message.text for message in llm.calls[-1]]
     assert "python jobs" in sent
     assert "where is #1?" in sent
+
+
+def test_search_result_number_resolves_after_the_search_left_the_window(tmp_path, store):
+    llm = FakeChatModel(responses=[*search_steps(), "Found [1] [2]", "Sure.", "Sure.", "OK."])
+    service = chat_with(tmp_path, store, llm, history_window=4)
+    events = list(service.send("c1", "python jobs"))
+    (citations,) = of_kind(events, CitationsEvent)
+    list(service.send("c1", "thanks"))
+    list(service.send("c1", "anything else?"))
+
+    list(service.send("c1", "show me #2"))
+
+    sent = llm.calls[-1]
+    assert [message.text for message in sent[1:]] == ["anything else?", "Sure.", "show me #2"]
+    second = citations.results[1]
+    assert f"#2 = job ID {second.job_id}" in sent[0].text
+
+
+def test_reopened_conversation_restores_history_and_search_results(tmp_path, store):
+    database = tmp_path / "conversations.sqlite"
+    first_run = FakeChatModel(responses=[*search_steps(), "Found [1] [2]"])
+    service = chat_with(tmp_path, store, first_run, checkpointer=open_checkpointer(database))
+    list(service.send("c1", "python jobs"))
+    # A new service on a new connection to the same file is what an app restart looks like.
+    llm = FakeChatModel(responses=["Sure."])
+    reopened = chat_with(tmp_path, store, llm, checkpointer=open_checkpointer(database))
+
+    conversation = reopened.conversation("c1")
+    list(reopened.send("c1", "show me #2"))
+
+    (turn,) = conversation.turns
+    assert turn.question == "python jobs"
+    assert answer_text(turn.events) == "Found [1] [2]"
+    (citations,) = of_kind(turn.events, CitationsEvent)
+    assert {result.job_id for result in citations.results} == {1, 2}
+    assert conversation.search_results == citations.results
+    second = citations.results[1]
+    assert f"#2 = job ID {second.job_id}" in llm.calls[-1][0].text
+    assert "python jobs" in [message.text for message in llm.calls[-1]]
+
+
+def test_unknown_conversation_is_empty(tmp_path, store):
+    service = chat(tmp_path, store, [])
+
+    conversation = service.conversation("never-used")
+
+    assert (conversation.turns, conversation.search_results) == ([], [])
+
+
+def looping_calls(count):
+    return [call("get_job_description", {"job_id": 1}, f"call-{i}") for i in range(count)]
+
+
+def executed_tool_calls(events):
+    return [event for event in of_kind(events, ToolResultEvent) if not event.is_error]
+
+
+def test_tool_call_cap_asks_the_llm_to_answer_with_what_it_has(tmp_path, store):
+    service = chat(tmp_path, store, [*looping_calls(7), "Here is job 1."])
+
+    events = list(service.send("c1", "show me job 1"))
+
+    assert len(executed_tool_calls(events)) == 6
+    assert answer_text(events) == "Here is job 1."
+
+
+def test_tool_call_cap_stops_a_looping_agent_with_a_helpful_answer(tmp_path, store):
+    service = chat(tmp_path, store, [*looping_calls(8), "Hello again!"])
+
+    events = list(service.send("c1", "show me job 1"))
+    next_turn = list(service.send("c1", "hi"))
+
+    assert len(executed_tool_calls(events)) == 6
+    assert answer_text(events) == TOOL_CALL_CAP_ANSWER
+    assert not of_kind(events, ErrorEvent)
+    assert answer_text(next_turn) == "Hello again!"
+
+
+def test_tool_call_cap_counts_per_question(tmp_path, store):
+    service = chat(tmp_path, store, [*looping_calls(4), "Done.", *looping_calls(4), "Done."])
+
+    list(service.send("c1", "show me job 1"))
+    events = list(service.send("c1", "and again"))
+
+    assert len(executed_tool_calls(events)) == 4

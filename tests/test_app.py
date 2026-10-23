@@ -43,3 +43,20 @@ def test_answers_show_linked_citations_and_the_verbatim_job_description(tmp_path
     assert any("[\\[1\\]](https://www.linkedin.com/jobs/view/" in text for text in markdown)
     assert DESCRIPTION.removesuffix("\n") in [element.value for element in app.code]
     assert len(app.chat_message) == 4
+
+
+def test_reopening_the_page_restores_the_conversation(tmp_path, monkeypatch):
+    service = chat(tmp_path, chat_store(tmp_path), [*search_steps(), "#1 Python LLM Engineer [1]"])
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
+    first = AppTest.from_file(str(APP), default_timeout=30).run()
+    first.chat_input[0].set_value("python jobs").run()
+
+    reopened = AppTest.from_file(str(APP), default_timeout=30)
+    reopened.query_params["c"] = first.query_params["c"]
+    reopened.run()
+
+    assert not reopened.exception
+    assert len(reopened.chat_message) == 2
+    markdown = [element.value for element in reopened.markdown]
+    assert "python jobs" in markdown
+    assert any(r"[\[1\]](https://www.linkedin.com/jobs/view/" in text for text in markdown)

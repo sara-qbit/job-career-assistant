@@ -15,11 +15,13 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.outputs import LLMResult
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field
 
 from turing_projects_v2.agent.agent import build_agent
+from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.config import Settings
 from turing_projects_v2.errors import AppError, ExternalAPIError
 from turing_projects_v2.llm import chat_model
@@ -101,12 +103,43 @@ type AnswerEvent = Annotated[
 ]
 
 
+class Turn(BaseModel):
+    """One question of a stored Conversation and the events of its answer."""
+
+    question: str
+    events: list[AnswerEvent]
+
+
+class Conversation(BaseModel):
+    """A stored Conversation as it is restored on reopening."""
+
+    turns: list[Turn]
+    search_results: list[SearchResult]
+    """The latest numbered Search Results, which "#n" refers to."""
+    current_job_id: int | None
+
+
 class ChatService:
     def __init__(
-        self, llm: BaseChatModel, store: JobStore, collection: Collection, embedder: Embeddings
+        self,
+        llm: BaseChatModel,
+        store: JobStore,
+        collection: Collection,
+        embedder: Embeddings,
+        *,
+        checkpointer: BaseCheckpointSaver | None = None,
+        history_window: int = 20,
+        max_tool_calls: int = 6,
     ) -> None:
+        """`checkpointer` stores the Conversations (in memory if None)."""
         self._store = store
-        self._agent = build_agent(llm, job_tools(store, llm, collection, embedder), InMemorySaver())
+        self._agent = build_agent(
+            llm,
+            job_tools(store, llm, collection, embedder),
+            checkpointer or InMemorySaver(),
+            history_window=history_window,
+            max_tool_calls=max_tool_calls,
+        )
 
     def send(self, conversation_id: str, message: str) -> Iterator[AnswerEvent]:
         """Run one turn of the Conversation; never raises for expected failures.
@@ -116,7 +149,7 @@ class ChatService:
         """
         usage_events: queue.SimpleQueue[UsageEvent] = queue.SimpleQueue()
         recorder = _UsageRecorder(conversation_id, self._store, usage_events)
-        config = {"configurable": {"thread_id": conversation_id}, "callbacks": [recorder]}
+        config = {**_thread(conversation_id), "callbacks": [recorder]}
         stream = self._agent.stream(
             {"messages": [HumanMessage(message)]}, config, stream_mode=["messages", "updates"]
         )
@@ -127,9 +160,13 @@ class ChatService:
                 if mode == "messages":
                     yield from _text_events(*data)
                 else:
-                    for update in data.values():
+                    for node, update in data.items():
                         for update_message in (update or {}).get("messages", []):
                             yield from _update_events(update_message)
+                            # Answers not written by the model node (e.g. the tool-call cap's)
+                            # are not streamed as chunks.
+                            if node != "model" and isinstance(update_message, AIMessage):
+                                yield TextEvent(text=update_message.text)
         except AppError as error:
             yield ErrorEvent(message=error.user_message)
         except openai.APIError:
@@ -141,16 +178,44 @@ class ChatService:
         while not usage_events.empty():
             yield usage_events.get()
 
+    def conversation(self, conversation_id: str) -> Conversation:
+        """The stored Conversation (empty if unknown): its turns and its latest Search Results.
+
+        Restored answers have no usage events; token usage stays in the store.
+        """
+        state = self._agent.get_state(_thread(conversation_id)).values
+        turns: list[Turn] = []
+        for message in state.get("messages", []):
+            if isinstance(message, HumanMessage):
+                turns.append(Turn(question=message.text, events=[]))
+            elif turns:
+                turns[-1].events += _update_events(message)
+                if isinstance(message, AIMessage) and message.text:
+                    turns[-1].events.append(TextEvent(text=message.text))
+        return Conversation(
+            turns=turns,
+            search_results=state.get("search_results", []),
+            current_job_id=state.get("current_job_id"),
+        )
+
 
 def open_chat_service(settings: Settings) -> ChatService:
-    """The Chat service on the real store, Knowledge Base and OpenRouter agent model."""
+    """The Chat service on the real store, Knowledge Base, Conversations and agent model."""
     embedder = load_embedder(settings.embedding_model)
     return ChatService(
         chat_model(settings, settings.agent_model),
         JobStore(settings.database_path),
         open_collection(settings.chroma_dir, settings.embedding_model),
         embedder,
+        checkpointer=open_checkpointer(settings.conversations_path),
+        history_window=settings.history_window,
+        max_tool_calls=settings.max_tool_calls,
     )
+
+
+def _thread(conversation_id: str) -> dict[str, Any]:
+    """The agent config that selects the Conversation's checkpointer thread."""
+    return {"configurable": {"thread_id": conversation_id}}
 
 
 def _text_events(chunk: Any, metadata: dict[str, Any]) -> Iterator[TextEvent]:

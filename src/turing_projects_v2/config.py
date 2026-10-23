@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     kaggle_dir: Path = PROJECT_ROOT / "data" / "raw" / "linkedin"
     database_path: Path = PROJECT_ROOT / "data" / "jobs.sqlite"
     chroma_dir: Path = PROJECT_ROOT / "data" / "chroma"
+    conversations_path: Path = PROJECT_ROOT / "data" / "conversations.sqlite"
     candidate_dir: Path = PROJECT_ROOT / "candidate"
     title_variants_path: Path = PROJECT_ROOT / "candidate" / "title_variants.toml"
 
