@@ -1,0 +1,16 @@
+# Candidate Profile: the only source of facts about the candidate.
+name = "Ada Example"
+street = "Example Street 1"
+postal_code = "12345"
+city = "Sample Town"
+country = "Germany"
+phone = "0123 4567890"
+email = "ada@example.com"
+github = "https://github.com/sara-qbit"
+
+# Target Role -> Letter Template (file name in templates/, without .txt).
+[target_roles]
+"AI Engineer" = "ai"
+"AI Innovation Manager" = "ai"
+"Quantum Software Developer" = "ai"
+"Grant Management Specialist" = "grant"
