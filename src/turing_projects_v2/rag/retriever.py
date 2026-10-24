@@ -128,6 +128,17 @@ def search_jobs(
     With a `reranker`, the best RERANK_TOP fused postings are re-scored (each by its chunk
     closest to any query) and ordered by that score.
     """
+    if collection.count() == 0:
+        return SearchOutcome(
+            results=[],
+            message=(
+                "The Knowledge Base for this embedding model is not indexed yet. "
+                "Run `uv run turing-projects-v2 index`, or choose another embedding model."
+            ),
+            trace=SearchTrace(
+                question=question, search_text="", filters=SearchFilters(), queries=[], fusion=[]
+            ),
+        )
     query = ask_structured(
         llm, SearchQuery, [SystemMessage(load_prompt("self_query")), HumanMessage(question)]
     )

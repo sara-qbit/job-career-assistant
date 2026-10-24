@@ -312,3 +312,13 @@ def test_without_reranker_the_fusion_order_is_kept(tmp_path, embedder):
 
     assert [result.job_id for result in outcome.results] == [1, 2]
     assert outcome.trace.reranked is None
+
+
+def test_empty_knowledge_base_says_it_needs_indexing(tmp_path, embedder):
+    empty = open_collection(tmp_path / "chroma", "not-indexed")
+
+    outcome = search_jobs("python jobs", FakeChatModel(responses=[]), empty, embedder)
+
+    assert outcome.results == []
+    assert "not indexed" in outcome.message
+    assert "turing-projects-v2 index" in outcome.message

@@ -189,12 +189,15 @@ class ChatService:
         *,
         scope_guard: ScopeGuard,
         reranker: Reranker | None = None,
+        default_search: SearchSettings | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
         history_window: int = 20,
         max_tool_calls: int = 6,
     ) -> None:
         """`knowledge_base(name)` opens the Knowledge Base of embedding model `name`;
-        `checkpointer` stores the Conversations (in memory if None)."""
+        `default_search` is used for turns sent without search settings (SearchSettings() if
+        None); `checkpointer` stores the Conversations (in memory if None)."""
+        self._default_search = default_search or SearchSettings()
         self._store = store
         self._profile = profile
         self._scope_guard = scope_guard
@@ -223,7 +226,6 @@ class ChatService:
         if problem is not None:
             yield self._security_event(conversation_id, "rejected_input", problem, message)
             return
-        self._store.touch_conversation(conversation_id, _title(message))
         if looks_like_injection(message):
             yield self._security_event(
                 conversation_id,
@@ -246,8 +248,9 @@ class ChatService:
             yield TextEvent(text=OFF_TOPIC_ANSWER)
             yield from _drained(usage_events)
             return
+        self._store.touch_conversation(conversation_id, _title(message))
         config = _thread(conversation_id)
-        config["configurable"]["search"] = (search or SearchSettings()).model_dump()
+        config["configurable"]["search"] = (search or self._default_search).model_dump()
         config["callbacks"] = [recorder]
         capped = False
         stream = self._agent.stream(
@@ -349,6 +352,7 @@ def open_chat_service(settings: Settings) -> ChatService:
         load_profile(settings.candidate_dir),
         scope_guard=LLMScopeGuard(llm),
         reranker=CrossEncoderReranker(),
+        default_search=SearchSettings(embedding_model=settings.embedding_model),
         checkpointer=open_checkpointer(settings.conversations_path),
         history_window=settings.history_window,
         max_tool_calls=settings.max_tool_calls,

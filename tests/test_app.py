@@ -11,9 +11,11 @@ from tests.test_chat import (
     chat,
     chat_store,
     chat_with,
+    of_kind,
     search_steps,
 )
 from turing_projects_v2.agent import chat as chat_module
+from turing_projects_v2.agent.chat import CitationsEvent
 from turing_projects_v2.fakes import FakeChatModel, FakeReranker
 
 APP = Path(__file__).parents[1] / "src" / "turing_projects_v2" / "ui" / "app.py"
@@ -127,3 +129,22 @@ def test_past_conversation_is_listed_and_reopens_on_click(tmp_path, monkeypatch)
     assert len(app.chat_message) == 2
     titles = [button.label for button in app.sidebar.button if button.key != "new_chat"]
     assert titles == ["hi", "python jobs"]
+
+
+def test_reopened_conversation_still_resolves_result_numbers(tmp_path, monkeypatch):
+    store = chat_store(tmp_path)
+    llm = FakeChatModel(responses=[*search_steps(), "Found [1] [2]", "Hello!", "Sure."])
+    service = chat_with(tmp_path, store, llm)
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app.chat_input[0].set_value("python jobs").run()
+    first_id = app.query_params["c"]
+    app.sidebar.button(key="new_chat").click().run()
+    app.chat_input[0].set_value("hi").run()
+
+    app.sidebar.button(key=f"conversation-{first_id}").click().run()
+    app.chat_input[0].set_value("tell me about #1").run()
+
+    assert not app.exception
+    (citations,) = of_kind(service.conversation(first_id).turns[0].events, CitationsEvent)
+    assert f"#1 = job ID {citations.results[0].job_id}" in llm.calls[-1][0].text
