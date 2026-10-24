@@ -61,7 +61,7 @@ def index(settings: Settings) -> None:
     store = JobStore(settings.database_path)
     for model_name in EMBEDDING_MODELS:
         print(f"\n## {model_name}")
-        embedder = load_embedder(model_name)
+        embedder = load_embedder(settings, model_name)
         with tqdm(unit="posting") as bar:
 
             def show(done: int, total: int, bar: tqdm = bar) -> None:
@@ -80,7 +80,8 @@ def index(settings: Settings) -> None:
 def search(settings: Settings, question: str, embedding_model: str | None) -> None:
     """search the Knowledge Base the way the chatbot does"""
     embedding_model = embedding_model or settings.embedding_model
-    embedder = load_embedder(embedding_model)  # first: an unknown name must not create a collection
+    # First: an unknown name must not create a collection.
+    embedder = load_embedder(settings, embedding_model)
     outcome = search_jobs(
         question,
         chat_model(settings, settings.agent_model),

@@ -4,9 +4,9 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Both cloud models selectable by name through the same embedding interface as MiniLM
-- [ ] Requests are batched; rate limits and transient failures are retried with backoff; persistent failure raises the API error type
-- [ ] All three collections contain the same tagged postings
-- [ ] Tests with a fake embedding client: batching, retry, error mapping
+- [x] Both cloud models selectable by name through the same embedding interface as MiniLM
+- [x] Requests are batched; rate limits and transient failures are retried with backoff; persistent failure raises the API error type
+- [x] All three collections contain the same tagged postings
+- [x] Tests with a fake embedding client: batching, retry, error mapping

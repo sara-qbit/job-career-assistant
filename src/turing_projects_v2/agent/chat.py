@@ -309,7 +309,7 @@ class ChatService:
 
 def open_chat_service(settings: Settings) -> ChatService:
     """The Chat service on the real store, Knowledge Base, Conversations and agent model."""
-    embedder = load_embedder(settings.embedding_model)
+    embedder = load_embedder(settings, settings.embedding_model)
     llm = chat_model(settings, settings.agent_model)
     return ChatService(
         llm,
