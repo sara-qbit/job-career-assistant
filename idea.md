@@ -143,14 +143,14 @@ Tel.: 0123 4567890
 [Address of the Company]
 
 Dear Mr/Ms Hiring Manager,
-I am writing to apply for [Job Name] ["Part/full"] at [Company]. If possible, I would like to start on 1 January 2027. I am currently transitioning my career towards AI engineering and would greatly appreciate the opportunity to apply my AI engineering knowledge to the design and management of AI systems. I am highly motivated to take on a responsible and dedicated role and to support the top high management in [the vision and goal of the Company]
+I am writing to apply for [Job Name] ["Part/full"] at [Company]. If possible, I would like to start on 1 January 2027. I am currently transitioning my career towards AI engineering and would greatly appreciate the opportunity to apply my AI engineering knowledge to the design and management of AI systems. I am highly motivated to take on a responsible and dedicated role and to support the top high management in achieving the [the vision and goal of the Company]
 My foundation in AI dates back to my doctoral studies, which I completed in 2018, before the current generation of generative AI existed. Rather than viewing this as a gap, I have been working purposefully to close it. I am currently completing a government-funded training programme in AI Engineering through the German Federal Employment Agency (Agentur für Arbeit), which ends on 21 December 2026 and covers the following topics:
 - Fundamentals of LLM application development
 - Application development using LangChain, RAG, and Streamlit
 - AI agents
 - Evaluation benchmarks
 - Final project in AI engineering
-The current Project that I made are in my Github link [Github Link]. I am highly motivated to ["Summary of the role"] 
+The current Projects that I made are in my Github link [Github Link]. I am highly motivated to ["Summary of the role"] 
 During my work at Budapest University of Technology and Economics and the 6G Health Institute, I developed strong skills in analysing and selecting suitable strategies to solve complex engineering problems in data science and suppoting in developing and pushing forward new use cases for EU Funding projects. I am fluent in German, English, French, and Arabic.
 I would welcome the opportunity to discuss in an interview how I could contribute to achieving the objectives of [Company name]. I look forward to hearing from you and to the possibility of a positive response.
 Yours sincerely,
