@@ -1,4 +1,5 @@
 import json
+import time
 
 import httpx
 import openai
@@ -38,7 +39,7 @@ def embedding_api(requests, failures=()):
     return answer
 
 
-def embedder(handler, batch_size=3, sleeps=None):
+def embedder(handler, batch_size=3, sleeps=None, request_timeout=10):
     client = openai.OpenAI(
         api_key="test-key",
         base_url="https://openrouter.test/api/v1",
@@ -50,6 +51,7 @@ def embedder(handler, batch_size=3, sleeps=None):
         "qwen/qwen3-embedding-8b",
         batch_size=batch_size,
         sleep=(sleeps if sleeps is not None else []).append,
+        request_timeout=request_timeout,
     )
 
 
@@ -127,3 +129,82 @@ def test_unknown_model_name_is_a_config_error():
 
     with pytest.raises(ConfigError, match="gemini, qwen3"):
         load_embedder(settings, "word2vec")
+
+
+def ok_response(data):
+    return httpx.Response(
+        200, json={"object": "list", "model": "qwen/qwen3-embedding-8b", "data": data}
+    )
+
+
+MALFORMED_RESPONSES = {
+    "error body with status 200": httpx.Response(
+        200, json={"error": {"message": "Provider returned error", "code": 502}}
+    ),
+    "fewer vectors than texts": ok_response(
+        [{"object": "embedding", "index": 0, "embedding": [1.0, 1.0]}]
+    ),
+    "duplicate indexes": ok_response(
+        [
+            {"object": "embedding", "index": 0, "embedding": [1.0, 1.0]},
+            {"object": "embedding", "index": 0, "embedding": [2.0, 1.0]},
+        ]
+    ),
+}
+
+
+@pytest.mark.parametrize("malformed", MALFORMED_RESPONSES.values(), ids=MALFORMED_RESPONSES)
+def test_malformed_response_is_retried(malformed):
+    requests = []
+
+    vectors = embedder(embedding_api(requests, failures=[malformed])).embed_documents(["a", "bb"])
+
+    assert vectors == [[1.0, 1.0], [2.0, 1.0]]
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize("malformed", MALFORMED_RESPONSES.values(), ids=MALFORMED_RESPONSES)
+def test_persistently_malformed_response_raises_the_api_error_type(malformed):
+    api = embedding_api([], failures=[malformed] * 10)
+
+    with pytest.raises(ExternalAPIError):
+        embedder(api).embed_documents(["a", "bb"])
+
+
+@pytest.mark.parametrize("status", [408, 409])
+def test_request_timeout_and_conflict_are_retried(status):
+    requests = []
+    failure = httpx.Response(status, json={"error": {"message": "Try again"}})
+
+    vectors = embedder(embedding_api(requests, failures=[failure])).embed_documents(["a"])
+
+    assert vectors == [[1.0, 1.0]]
+    assert len(requests) == 2
+
+
+def test_rate_limit_waits_as_long_as_retry_after_asks():
+    sleeps = []
+    rate_limited = httpx.Response(
+        429, headers={"Retry-After": "30"}, json={"error": {"message": "Rate limit exceeded"}}
+    )
+
+    embedder(embedding_api([], failures=[rate_limited]), sleeps=sleeps).embed_documents(["a"])
+
+    assert sleeps == [30]
+
+
+def test_request_that_hangs_is_abandoned_and_retried():
+    requests = []
+    answer = embedding_api(requests)
+
+    def hang_once(request):
+        if not requests:
+            requests.append("hung")
+            time.sleep(2)
+        return answer(request)
+
+    started = time.perf_counter()
+    vectors = embedder(hang_once, request_timeout=0.2).embed_documents(["a"])
+
+    assert vectors == [[1.0, 1.0]]
+    assert time.perf_counter() - started < 1.5
