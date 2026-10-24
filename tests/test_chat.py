@@ -14,6 +14,7 @@ from turing_projects_v2.agent.chat import (
     ErrorEvent,
     JobDescriptionEvent,
     JobInfoEvent,
+    MarketStatsEvent,
     StatusEvent,
     TextEvent,
     ToolCallEvent,
@@ -193,6 +194,26 @@ def test_cover_letter_is_shown_and_personal_details_never_reach_the_llm(tmp_path
     sent = "\n".join(message.text for messages in llm.calls for message in messages)
     for detail in ["Ada Example", "Main Street", "0123 456", "12345"]:
         assert detail not in sent
+
+
+def test_market_statistics_are_shown_as_a_chart_event(tmp_path, store):
+    llm = FakeChatModel(
+        responses=[
+            call("job_market_stats", {"statistic": "postings_by_target_role"}),
+            "Over the 2 Target-Role postings: 1 AI Engineer, 1 Grant Management Specialist.",
+        ]
+    )
+    service = chat_with(tmp_path, store, llm)
+
+    events = list(service.send("c1", "how many jobs per Target Role?"))
+
+    assert of_kind(events, StatusEvent)[0].text.startswith("Computing job market statistics")
+    (shown,) = of_kind(events, MarketStatsEvent)
+    assert shown.stats.population == "the 2 Target-Role postings"
+    assert {row.label: row.count for row in shown.stats.rows} == {
+        "AI Engineer": 1,
+        "Grant Management Specialist": 1,
+    }
 
 
 def test_tool_error_is_returned_to_the_llm_and_answered_friendly(tmp_path, store):

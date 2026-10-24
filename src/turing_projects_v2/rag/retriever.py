@@ -26,6 +26,15 @@ RRF_K = 60
 _CHUNKS_PER_POSTING = 10
 
 
+WorkType = Literal["Full-time", "Part-time", "Contract", "Temporary", "Internship", "Volunteer"]
+TargetRoleName = Literal[
+    "AI Engineer",
+    "AI Innovation Manager",
+    "Quantum Software Developer",
+    "Grant Management Specialist",
+]
+
+
 class SearchFilters(BaseModel):
     """Hard conditions from the question; None means the question does not state one."""
 
@@ -36,24 +45,14 @@ class SearchFilters(BaseModel):
         default=None,
         description='a city ("Austin") or a two-letter US state code ("TX", never "Texas")',
     )
-    work_type: (
-        Literal["Full-time", "Part-time", "Contract", "Temporary", "Internship", "Volunteer"] | None
-    ) = None
+    work_type: WorkType | None = None
     experience_level: (
         Literal[
             "Internship", "Entry level", "Associate", "Mid-Senior level", "Director", "Executive"
         ]
         | None
     ) = None
-    target_role: (
-        Literal[
-            "AI Engineer",
-            "AI Innovation Manager",
-            "Quantum Software Developer",
-            "Grant Management Specialist",
-        ]
-        | None
-    ) = None
+    target_role: TargetRoleName | None = None
 
 
 class SearchQuery(BaseModel):

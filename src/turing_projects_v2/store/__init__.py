@@ -153,6 +153,15 @@ class CoverLetter(BaseModel):
         }
 
 
+# What postings can be counted by, as SQL expressions; nothing else ever reaches the SQL.
+_COUNT_BY = {
+    "target_role": "COALESCE(target_role, 'No Target Role')",
+    "work_type": "COALESCE(formatted_work_type, 'Not stated')",
+    "remote": "CASE WHEN remote_allowed = 1 THEN 'Remote' ELSE 'On-site or not stated' END",
+    "location": "COALESCE(location, 'Not stated')",
+}
+
+
 class TokenUsage(BaseModel):
     """Tokens used by one LLM call; cost in USD, None when the provider did not report it."""
 
@@ -161,6 +170,22 @@ class TokenUsage(BaseModel):
     input_tokens: int
     output_tokens: int
     cost: float | None
+
+
+def _posting_filter(
+    target_roles_only: bool, target_role: str | None, work_type: str | None
+) -> tuple[str, tuple[str, ...]]:
+    """The WHERE clause and its parameters for the postings a statistic covers."""
+    conditions, parameters = [], []
+    if target_roles_only:
+        conditions.append("target_role IS NOT NULL")
+    if target_role is not None:
+        conditions.append("target_role = ?")
+        parameters.append(target_role)
+    if work_type is not None:
+        conditions.append("formatted_work_type = ?")
+        parameters.append(work_type)
+    return ("WHERE " + " AND ".join(conditions) if conditions else ""), tuple(parameters)
 
 
 class JobStore:
@@ -350,6 +375,53 @@ class JobStore:
             "SELECT letter FROM cover_letters WHERE job_id = ? ORDER BY id", (job_id,)
         ).fetchall()
         return [CoverLetter.model_validate_json(row["letter"]) for row in rows]
+
+    def posting_counts(
+        self,
+        by: str,
+        *,
+        target_roles_only: bool,
+        target_role: str | None = None,
+        work_type: str | None = None,
+        limit: int | None = None,
+    ) -> tuple[list[tuple[str, int]], int]:
+        """Postings per value of `by` (a _COUNT_BY key), most first, and the number counted.
+
+        `target_roles_only`, `target_role` and `work_type` narrow the postings counted; `limit`
+        keeps only the top values.
+        """
+        where, parameters = _posting_filter(target_roles_only, target_role, work_type)
+        rows = self._db.execute(
+            f"SELECT {_COUNT_BY[by]} AS label, COUNT(*) AS n FROM postings {where} "
+            "GROUP BY label ORDER BY n DESC, label LIMIT ?",
+            (*parameters, -1 if limit is None else limit),
+        ).fetchall()
+        total = self._db.execute(f"SELECT COUNT(*) FROM postings {where}", parameters).fetchone()
+        return [(row["label"], row["n"]) for row in rows], total[0]
+
+    def salaries(
+        self,
+        *,
+        target_roles_only: bool,
+        target_role: str | None = None,
+        work_type: str | None = None,
+    ) -> dict[str, list[float]]:
+        """The stated yearly USD salaries of the postings, per Target Role ('No Target Role').
+
+        Kaggle's normalized salary is the posting's salary converted to a yearly amount.
+        """
+        where, parameters = _posting_filter(target_roles_only, target_role, work_type)
+        stated = "currency = 'USD' AND normalized_salary > 0"
+        where = f"{where} AND {stated}" if where else f"WHERE {stated}"
+        rows = self._db.execute(
+            f"SELECT {_COUNT_BY['target_role']} AS label, normalized_salary FROM postings {where} "
+            "ORDER BY label",
+            parameters,
+        ).fetchall()
+        result: dict[str, list[float]] = {}
+        for row in rows:
+            result.setdefault(row["label"], []).append(row["normalized_salary"])
+        return result
 
     def record_token_usage(self, usage: TokenUsage) -> None:
         with self._db:

@@ -5,6 +5,7 @@ Replaying the stored events of an earlier answer renders it the same way.
 
 import re
 
+import pandas as pd
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
@@ -15,6 +16,7 @@ from turing_projects_v2.agent.chat import (
     ErrorEvent,
     JobDescriptionEvent,
     JobInfoEvent,
+    MarketStatsEvent,
     StatusEvent,
     TextEvent,
     ToolCallEvent,
@@ -26,6 +28,7 @@ from turing_projects_v2.job_info import NOT_STATED
 from turing_projects_v2.judge import Verdict
 from turing_projects_v2.rag.retriever import SearchResult
 from turing_projects_v2.store import CoverLetter, JobInfo
+from turing_projects_v2.tools.stats import MarketStats
 
 CITATION = re.compile(r"\[(\d+)\](?!\()")
 
@@ -110,6 +113,48 @@ def show_cover_letter(letter: CoverLetter) -> None:
         )
 
 
+def show_market_stats(stats: MarketStats) -> None:
+    """A statistic as a chart, with the postings it covers."""
+    with st.container(border=True):
+        st.markdown(f"**{escape_markdown(stats.title)}**")
+        st.caption(f"Computed exactly over {stats.population}.")
+        if not stats.rows:
+            st.info("No postings match.")
+            return
+        table = pd.DataFrame([row.model_dump() for row in stats.rows])
+        if stats.statistic != "salary_by_target_role":
+            st.bar_chart(
+                table,
+                x="label",
+                y="count",
+                horizontal=True,
+                sort="-count",
+                x_label="Postings",
+                y_label="",
+            )
+            return
+        quartiles = {"p25": "25th percentile", "median": "Median", "p75": "75th percentile"}
+        named = table.rename(columns={"label": "Target Role", "count": "Postings with salary"})
+        named = named.rename(columns=quartiles)
+        # Grouped bars show the middle half of salaries around the median for each role.
+        st.bar_chart(
+            named,
+            x="Target Role",
+            y=list(quartiles.values()),
+            horizontal=True,
+            stack=False,
+            x_label="Yearly salary (USD)",
+            y_label="",
+        )
+        st.dataframe(
+            named,
+            hide_index=True,
+            column_config={
+                name: st.column_config.NumberColumn(format="dollar") for name in quartiles.values()
+            },
+        )
+
+
 def show_verdict(verdict: Verdict | None) -> None:
     if verdict is None:
         st.caption("Not checked: the source states nothing to summarise.")
@@ -173,6 +218,9 @@ class AnswerView:
             case CoverLetterEvent(letter=letter):
                 self._text_area = None
                 show_cover_letter(letter)
+            case MarketStatsEvent(stats=stats):
+                self._text_area = None
+                show_market_stats(stats)
             case UsageEvent(usage=usage):
                 self._tokens += usage.input_tokens + usage.output_tokens
                 if usage.cost is None:

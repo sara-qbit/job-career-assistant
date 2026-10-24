@@ -32,12 +32,14 @@ from turing_projects_v2.rag.indexer import open_collection
 from turing_projects_v2.rag.retriever import SearchOutcome, SearchResult
 from turing_projects_v2.store import CoverLetter, JobInfo, JobStore, TokenUsage
 from turing_projects_v2.tools.jobs import JobDescription, job_tools
+from turing_projects_v2.tools.stats import MarketStats, market_stats_tool
 
 TOOL_STATUS = {
     "search_jobs": "Searching the Knowledge Base",
     "get_job_description": "Fetching the Job Description",
     "create_job_info": "Creating the Job Info and checking it",
     "write_cover_letter": "Writing the Cover Letter and checking it",
+    "job_market_stats": "Computing job market statistics",
 }
 
 
@@ -92,6 +94,11 @@ class CoverLetterEvent(BaseModel):
     letter: CoverLetter
 
 
+class MarketStatsEvent(BaseModel):
+    kind: Literal["market_stats"] = "market_stats"
+    stats: MarketStats
+
+
 class UsageEvent(BaseModel):
     kind: Literal["usage"] = "usage"
     usage: TokenUsage
@@ -113,6 +120,7 @@ type AnswerEvent = Annotated[
     | JobDescriptionEvent
     | JobInfoEvent
     | CoverLetterEvent
+    | MarketStatsEvent
     | UsageEvent
     | ErrorEvent,
     Field(discriminator="kind"),
@@ -153,7 +161,10 @@ class ChatService:
         self._store = store
         self._agent = build_agent(
             llm,
-            job_tools(store, llm, collection, embedder, judge, profile),
+            [
+                *job_tools(store, llm, collection, embedder, judge, profile),
+                market_stats_tool(store),
+            ],
             checkpointer or InMemorySaver(),
             history_window=history_window,
             max_tool_calls=max_tool_calls,
@@ -269,6 +280,8 @@ def _update_events(message: Any) -> Iterator[AnswerEvent]:
             yield JobInfoEvent(info=JobInfo.model_validate(message.artifact))
         elif message.name == "write_cover_letter":
             yield CoverLetterEvent(letter=CoverLetter.model_validate(message.artifact))
+        elif message.name == "job_market_stats":
+            yield MarketStatsEvent(stats=MarketStats.model_validate(message.artifact))
 
 
 class _UsageRecorder(BaseCallbackHandler):
