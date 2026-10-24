@@ -322,3 +322,21 @@ def test_empty_knowledge_base_says_it_needs_indexing(tmp_path, embedder):
     assert outcome.results == []
     assert "not indexed" in outcome.message
     assert "turing-projects-v2 index" in outcome.message
+
+
+def test_trace_keeps_the_matched_chunk_of_each_result(tmp_path, embedder):
+    collection = python_and_grants_jobs(tmp_path, embedder)
+
+    outcome = search_jobs(
+        "python jobs",
+        scripted_llm("python", ["python", "python developer", "python engineer"]),
+        collection,
+        embedder,
+    )
+
+    sources = outcome.trace.sources
+    assert [source.job_id for source in sources] == [r.job_id for r in outcome.results]
+    python_job = sources[0]
+    assert python_job.text.startswith("Title: Python Engineer\n")
+    assert "Python and more Python." in python_job.text
+    assert python_job.distance >= 0

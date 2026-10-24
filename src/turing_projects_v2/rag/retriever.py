@@ -97,6 +97,14 @@ class QueryStage(BaseModel):
     distances: list[float]
 
 
+class MatchedChunk(BaseModel):
+    """The chunk of a returned posting closest to any query: the source the answer is based on."""
+
+    job_id: int
+    text: str
+    distance: float
+
+
 class SearchTrace(BaseModel):
     """Every stage of one search, for display in the Evaluation tab."""
 
@@ -106,6 +114,7 @@ class SearchTrace(BaseModel):
     queries: list[QueryStage]
     fusion: list[tuple[int, float]]  # (job ID, RRF score), best first
     reranked: list[tuple[int, float]] | None = None  # (job ID, Reranker score), best first
+    sources: list[MatchedChunk] = []  # one per returned result, in result order
 
 
 class SearchOutcome(BaseModel):
@@ -212,6 +221,14 @@ def search_jobs(
         queries=stages,
         fusion=fusion,
         reranked=reranked,
+        sources=[
+            MatchedChunk(
+                job_id=result.job_id,
+                text=closest_chunk[result.job_id][1],
+                distance=closest_chunk[result.job_id][0],
+            )
+            for result in results
+        ],
     )
     return SearchOutcome(results=results, message=_message(results, query.filters), trace=trace)
 

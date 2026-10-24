@@ -7,7 +7,7 @@ import queue
 from collections.abc import Callable, Iterator
 from functools import cache
 from typing import Annotated, Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import openai
 from langchain_core.callbacks import BaseCallbackHandler
@@ -17,7 +17,7 @@ from langchain_core.outputs import LLMResult
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from turing_projects_v2.agent.agent import TOOL_CALL_CAP_RESULT, build_agent
 from turing_projects_v2.agent.memory import open_checkpointer
@@ -29,7 +29,12 @@ from turing_projects_v2.profile import CandidateProfile, load_profile
 from turing_projects_v2.rag.embeddings import load_embedder
 from turing_projects_v2.rag.indexer import KnowledgeBase, open_collection
 from turing_projects_v2.rag.reranker import CrossEncoderReranker, Reranker
-from turing_projects_v2.rag.retriever import SearchOutcome, SearchResult, SearchSettings
+from turing_projects_v2.rag.retriever import (
+    SearchOutcome,
+    SearchResult,
+    SearchSettings,
+    SearchTrace,
+)
 from turing_projects_v2.security import (
     EXCERPT_LENGTH,
     LLMScopeGuard,
@@ -46,6 +51,7 @@ from turing_projects_v2.store import (
     JobStore,
     SecurityLogEntry,
     TokenUsage,
+    UsageTotal,
 )
 from turing_projects_v2.tools.jobs import JobDescription, job_tools
 from turing_projects_v2.tools.stats import MarketStats, market_stats_tool
@@ -99,10 +105,12 @@ class ToolResultEvent(BaseModel):
 
 
 class CitationsEvent(BaseModel):
-    """The numbered Search Results that [n] markers in the answer refer to."""
+    """The numbered Search Results that [n] markers in the answer refer to, and how the search
+    found them (for the Evaluation tab)."""
 
     kind: Literal["citations"] = "citations"
     results: list[SearchResult]
+    trace: SearchTrace | None = None
 
 
 class JobDescriptionEvent(BaseModel):
@@ -163,10 +171,16 @@ type AnswerEvent = Annotated[
 
 
 class Turn(BaseModel):
-    """One question of a stored Conversation and the events of its answer."""
+    """One question of a stored Conversation, the events of its answer and their token usage."""
 
     question: str
     events: list[AnswerEvent]
+    usage: list[TokenUsage] = []
+
+    @computed_field
+    @property
+    def total(self) -> UsageTotal:
+        return UsageTotal.of(self.usage)
 
 
 class Conversation(BaseModel):
@@ -176,6 +190,13 @@ class Conversation(BaseModel):
     search_results: list[SearchResult]
     """The latest numbered Search Results, which "#n" refers to."""
     current_job_id: int | None
+    usage: list[TokenUsage] = []
+    """Every LLM call of the Conversation, also those of refused messages."""
+
+    @computed_field
+    @property
+    def total(self) -> UsageTotal:
+        return UsageTotal.of(self.usage)
 
 
 class ChatService:
@@ -235,7 +256,8 @@ class ChatService:
                 message,
             )
         usage_events: queue.SimpleQueue[UsageEvent] = queue.SimpleQueue()
-        recorder = _UsageRecorder(conversation_id, self._store, usage_events)
+        turn_id = uuid4().hex  # also the question message's ID, which links usage to its answer
+        recorder = _UsageRecorder(conversation_id, turn_id, self._store, usage_events)
         try:
             in_scope = self._scope_guard.check(message, {"callbacks": [recorder]}).on_topic
         except AppError as error:
@@ -254,7 +276,9 @@ class ChatService:
         config["callbacks"] = [recorder]
         capped = False
         stream = self._agent.stream(
-            {"messages": [HumanMessage(message)]}, config, stream_mode=["messages", "updates"]
+            {"messages": [HumanMessage(message, id=turn_id)]},
+            config,
+            stream_mode=["messages", "updates"],
         )
         try:
             for mode, data in stream:
@@ -312,16 +336,22 @@ class ChatService:
         """Every Conversation, most recently used first."""
         return self._store.conversations()
 
+    def security_log(self) -> list[SecurityLogEntry]:
+        """Every security event of every Conversation, oldest first."""
+        return self._store.security_log()
+
     def conversation(self, conversation_id: str) -> Conversation:
         """The stored Conversation (empty if unknown): its turns and its latest Search Results.
 
-        Restored answers have no usage events; token usage stays in the store.
+        Restored answers have no usage events; each turn's token usage is in `Turn.usage`.
         """
         state = self._agent.get_state(_thread(conversation_id)).values
+        usage = self._store.token_usage(conversation_id)
         turns: list[Turn] = []
         for message in state.get("messages", []):
             if isinstance(message, HumanMessage):
-                turns.append(Turn(question=message.text, events=[]))
+                turn_usage = [u for u in usage if u.turn_id is not None and u.turn_id == message.id]
+                turns.append(Turn(question=message.text, events=[], usage=turn_usage))
             elif turns:
                 turns[-1].events += _update_events(message)
                 if isinstance(message, AIMessage) and message.text:
@@ -330,6 +360,7 @@ class ChatService:
             turns=turns,
             search_results=state.get("search_results", []),
             current_job_id=state.get("current_job_id"),
+            usage=usage,
         )
 
 
@@ -400,7 +431,7 @@ def _update_events(message: Any) -> Iterator[AnswerEvent]:
             return
         if message.name == "search_jobs":
             outcome = SearchOutcome.model_validate(message.artifact)
-            yield CitationsEvent(results=outcome.results)
+            yield CitationsEvent(results=outcome.results, trace=outcome.trace)
         elif message.name == "get_job_description":
             yield JobDescriptionEvent(description=JobDescription.model_validate(message.artifact))
         elif message.name == "create_job_info":
@@ -415,9 +446,14 @@ class _UsageRecorder(BaseCallbackHandler):
     """Records the token usage and cost of every LLM call of one turn."""
 
     def __init__(
-        self, conversation_id: str, store: JobStore, events: queue.SimpleQueue[UsageEvent]
+        self,
+        conversation_id: str,
+        turn_id: str,
+        store: JobStore,
+        events: queue.SimpleQueue[UsageEvent],
     ) -> None:
         self._conversation_id = conversation_id
+        self._turn_id = turn_id
         self._store = store
         self._events = events
         self._models: dict[UUID, str] = {}
@@ -444,6 +480,7 @@ class _UsageRecorder(BaseCallbackHandler):
             input_tokens=message.usage_metadata["input_tokens"],
             output_tokens=message.usage_metadata["output_tokens"],
             cost=message.response_metadata.get("cost"),
+            turn_id=self._turn_id,
         )
         self._store.record_token_usage(usage)
         self._events.put(UsageEvent(usage=usage))

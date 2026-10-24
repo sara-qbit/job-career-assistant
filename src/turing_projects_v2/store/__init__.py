@@ -181,13 +181,42 @@ class SecurityLogEntry(BaseModel):
 
 
 class TokenUsage(BaseModel):
-    """Tokens used by one LLM call; cost in USD, None when the provider did not report it."""
+    """Tokens used by one LLM call; cost in USD, None when the provider did not report it.
+
+    `turn_id` is the ID of the question message whose answer made the call.
+    """
 
     conversation_id: str
     model: str
     input_tokens: int
     output_tokens: int
     cost: float | None
+    turn_id: str | None = None
+
+
+class UsageTotal(BaseModel):
+    """Tokens and cost of several LLM calls; `cost_known` is False if a cost was not reported."""
+
+    tokens: int = 0
+    cost: float = 0.0
+    cost_known: bool = True
+
+    @classmethod
+    def of(cls, usages: Iterable[TokenUsage]) -> UsageTotal:
+        total = cls()
+        for usage in usages:
+            total.tokens += usage.input_tokens + usage.output_tokens
+            if usage.cost is None:
+                total.cost_known = False
+            else:
+                total.cost += usage.cost
+        total.cost = round(total.cost, 10)  # sums of float costs pick up rounding noise
+        return total
+
+    def describe(self) -> str:
+        """E.g. "3,192 tokens · $0.0005"."""
+        cost = f"${self.cost:.4f}" if self.cost_known else "cost not reported"
+        return f"{self.tokens:,} tokens · {cost}"
 
 
 def _posting_filter(
@@ -257,8 +286,12 @@ class JobStore:
                 "CREATE TABLE IF NOT EXISTS token_usage ("
                 "id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, model TEXT NOT NULL, "
                 "input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cost REAL, "
-                "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, turn_id TEXT)"
             )
+            # Databases created before answers had turn IDs lack the column.
+            columns = {row["name"] for row in self._db.execute("PRAGMA table_info(token_usage)")}
+            if "turn_id" not in columns:
+                self._db.execute("ALTER TABLE token_usage ADD COLUMN turn_id TEXT")
 
     def upsert_postings(self, rows: Iterable[Mapping[str, str | None]]) -> int:
         """Insert or update postings by job ID, keeping their Target Role tag; return the count."""
@@ -487,21 +520,23 @@ class JobStore:
         with self._db:
             self._db.execute(
                 "INSERT INTO token_usage "
-                "(conversation_id, model, input_tokens, output_tokens, cost) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(conversation_id, model, input_tokens, output_tokens, cost, turn_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     usage.conversation_id,
                     usage.model,
                     usage.input_tokens,
                     usage.output_tokens,
                     usage.cost,
+                    usage.turn_id,
                 ),
             )
 
     def token_usage(self, conversation_id: str) -> list[TokenUsage]:
         """Every recorded LLM call of the Conversation, oldest first."""
         rows = self._db.execute(
-            "SELECT conversation_id, model, input_tokens, output_tokens, cost FROM token_usage "
+            "SELECT conversation_id, model, input_tokens, output_tokens, cost, turn_id "
+            "FROM token_usage "
             "WHERE conversation_id = ? ORDER BY id",
             (conversation_id,),
         ).fetchall()

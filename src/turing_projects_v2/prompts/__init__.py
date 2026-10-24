@@ -9,6 +9,11 @@ PROMPTS_DIR = Path(__file__).parent
 PROMPT_NAME = re.compile(r"\w+")
 
 
+def prompt_names(prompts_dir: Path = PROMPTS_DIR) -> list[str]:
+    """The names of all prompts, alphabetically."""
+    return sorted(path.stem for path in prompts_dir.glob("*.md"))
+
+
 def load_prompt(name: str, prompts_dir: Path = PROMPTS_DIR) -> str:
     """Return the text of `<prompts_dir>/<name>.md`."""
     if not PROMPT_NAME.fullmatch(name):

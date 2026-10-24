@@ -547,3 +547,65 @@ def test_every_search_of_a_turn_uses_the_chosen_embedding_model(tmp_path, store)
     list(service.send("c1", "python or grant jobs", SearchSettings(embedding_model="qwen3")))
 
     assert knowledge_bases.opened == ["qwen3", "qwen3"]
+
+
+def with_usage(message, input_tokens, output_tokens, cost):
+    message.usage_metadata = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+    message.response_metadata = {"model_name": "fake/model", "cost": cost}
+    return message
+
+
+def test_reopened_conversation_reports_usage_per_answer_and_in_total(tmp_path, store):
+    first, *retriever_steps = search_steps()
+    service = chat(
+        tmp_path,
+        store,
+        [
+            with_usage(first, 100, 10, 0.001),
+            *retriever_steps,
+            with_usage(AIMessage(content="Found one [1]"), 200, 20, 0.002),
+            with_usage(AIMessage(content="You're welcome."), 50, 5, 0.0005),
+        ],
+    )
+    list(service.send("c1", "python jobs"))
+    list(service.send("c1", "thanks"))
+
+    conversation = service.conversation("c1")
+
+    first_turn, second_turn = conversation.turns
+    assert (first_turn.total.tokens, first_turn.total.cost) == (330, pytest.approx(0.003))
+    assert (second_turn.total.tokens, second_turn.total.cost) == (55, pytest.approx(0.0005))
+    assert (conversation.total.tokens, conversation.total.cost) == (385, pytest.approx(0.0035))
+    assert conversation.total.cost_known
+
+
+def test_cost_total_says_when_a_provider_did_not_report_cost(tmp_path, store):
+    service = chat(tmp_path, store, [with_usage(AIMessage(content="Hi"), 10, 2, None)])
+    list(service.send("c1", "hello"))
+
+    total = service.conversation("c1").total
+
+    assert (total.tokens, total.cost, total.cost_known) == (12, 0.0, False)
+
+
+def test_reopened_search_turn_keeps_the_rag_trace_and_sources(tmp_path, store):
+    service = chat(tmp_path, store, [*search_steps(), "Found [1] [2]"])
+    list(service.send("c1", "python jobs"))
+
+    (turn,) = service.conversation("c1").turns
+
+    (citations,) = of_kind(turn.events, CitationsEvent)
+    trace = citations.trace
+    assert trace.question == "python jobs"
+    assert [stage.query for stage in trace.queries] == [
+        "python",
+        "python",
+        "python engineer",
+        "python developer",
+    ]
+    assert [job_id for job_id, _ in trace.fusion] == [r.job_id for r in citations.results]
+    assert [source.job_id for source in trace.sources] == [r.job_id for r in citations.results]

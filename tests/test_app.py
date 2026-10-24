@@ -148,3 +148,30 @@ def test_reopened_conversation_still_resolves_result_numbers(tmp_path, monkeypat
     assert not app.exception
     (citations,) = of_kind(service.conversation(first_id).turns[0].events, CitationsEvent)
     assert f"#1 = job ID {citations.results[0].job_id}" in llm.calls[-1][0].text
+
+
+EVALUATION_SECTIONS = [
+    "Conversation history",
+    "RAG process",
+    "Sources",
+    "Token usage and cost",
+    "Tool calls",
+    "Security",
+    "System prompts",
+]
+
+
+def test_evaluation_page_shows_every_section_for_the_conversation(tmp_path, monkeypatch):
+    service = chat(tmp_path, chat_store(tmp_path), [*search_steps(), "Found [1] [2]"])
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app.chat_input[0].set_value("python jobs").run()
+
+    app.switch_page("app_pages/evaluation.py").run()
+
+    assert not app.exception
+    assert [header.value for header in app.subheader] == EVALUATION_SECTIONS
+    downloads = app.get("download_button")
+    assert [button.proto.label for button in downloads] == ["Markdown", "JSON"]
+    text = " ".join(element.value for element in app.markdown)
+    assert "python engineer" in text  # a query variant of the RAG process
