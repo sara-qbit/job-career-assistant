@@ -28,7 +28,7 @@ from turing_projects_v2.documents import letter_docx, letter_pdf
 from turing_projects_v2.job_info import NOT_STATED
 from turing_projects_v2.judge import Verdict
 from turing_projects_v2.rag.retriever import SearchResult
-from turing_projects_v2.store import CoverLetter, JobInfo
+from turing_projects_v2.store import CoverLetter, JobInfo, TokenUsage, UsageTotal
 from turing_projects_v2.tools.stats import MarketStats
 
 CITATION = re.compile(r"\[(\d+)\](?!\()")
@@ -178,9 +178,7 @@ class AnswerView:
         self._text_area: DeltaGenerator | None = None
         self._pending_status: DeltaGenerator | None = None
         self._statuses: dict[str, DeltaGenerator] = {}
-        self._tokens = 0
-        self._cost = 0.0
-        self._cost_known = True
+        self._usage: list[TokenUsage] = []
 
     def show(self, event: AnswerEvent) -> None:
         match event:
@@ -229,17 +227,13 @@ class AnswerView:
                 self._text_area = None
                 show_market_stats(stats)
             case UsageEvent(usage=usage):
-                self._tokens += usage.input_tokens + usage.output_tokens
-                if usage.cost is None:
-                    self._cost_known = False
-                else:
-                    self._cost += usage.cost
+                self._usage.append(usage)
             case ErrorEvent(message=message):
                 self._text_area = None
                 st.error(message)
 
     def finish(self) -> None:
         """Show the answer's token usage and cost below it."""
-        if self._tokens:
-            cost = f"${self._cost:.4f}" if self._cost_known else "cost not reported"
-            st.caption(f"{self._tokens:,} tokens · {cost}")
+        total = UsageTotal.of(self._usage)
+        if total.tokens:
+            st.caption(total.describe())

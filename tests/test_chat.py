@@ -609,3 +609,18 @@ def test_reopened_search_turn_keeps_the_rag_trace_and_sources(tmp_path, store):
     ]
     assert [job_id for job_id, _ in trace.fusion] == [r.job_id for r in citations.results]
     assert [source.job_id for source in trace.sources] == [r.job_id for r in citations.results]
+
+
+def test_turn_finds_the_result_and_card_of_each_tool_call(tmp_path, store):
+    summaries = JobSummaries(role_summary="Builds LLM apps.", company_vision="Make AI useful.")
+    service = chat(tmp_path, store, [call("create_job_info", {"job_id": 1}), summaries, "Done."])
+    list(service.send("c1", "job info for job 1"))
+
+    (turn,) = service.conversation("c1").turns
+    (tool_call,) = of_kind(turn.events, ToolCallEvent)
+    result, card = turn.tool_result(tool_call.call_id)
+
+    assert result.name == "create_job_info" and not result.is_error
+    assert isinstance(card, JobInfoEvent)
+    assert card.info.role_summary == "Builds LLM apps."
+    assert turn.tool_result("unknown-call") == (None, None)

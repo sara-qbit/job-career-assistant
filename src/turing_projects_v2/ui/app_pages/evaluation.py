@@ -9,13 +9,13 @@ import json
 import pandas as pd
 import streamlit as st
 
-from turing_projects_v2.agent.chat import CitationsEvent, TextEvent, ToolCallEvent, ToolResultEvent
+from turing_projects_v2.agent.chat import CitationsEvent, TextEvent, ToolCallEvent
 from turing_projects_v2.config import load_settings
 from turing_projects_v2.errors import AppError
 from turing_projects_v2.export import conversation_json, conversation_markdown
 from turing_projects_v2.prompts import load_prompt, prompt_names
 from turing_projects_v2.security import EXCERPT_LENGTH, INJECTION_PATTERNS, MAX_MESSAGE_LENGTH
-from turing_projects_v2.ui.answer import escape_markdown
+from turing_projects_v2.ui.answer import AnswerView, escape_markdown
 from turing_projects_v2.ui.session import chat_service
 
 state = st.session_state
@@ -112,6 +112,9 @@ if not searches:
     st.info("No search in this Conversation yet.")
 for number, event in searches:
     st.markdown(f"**Question {number}:** {escape_markdown(event.trace.question)}")
+    score_name = "reranker score" if event.trace.reranked is not None else "RRF score"
+    if not event.trace.sources:
+        st.caption("Matched chunks were not recorded for searches before the Evaluation tab.")
     results = {result.job_id: result for result in event.results}
     for source in event.trace.sources:
         result = results[source.job_id]
@@ -120,7 +123,7 @@ for number, event in searches:
             link = f"[{name}]({result.url})" if result.url else name
             st.markdown(
                 f"**[{result.number}] {link}** · job ID {result.job_id} · "
-                f"distance {source.distance:.3f} · score {result.score:.4f}"
+                f"distance {source.distance:.3f} · {score_name} {result.score:.4f}"
             )
             st.code(source.text, language=None, wrap_lines=True)
 
@@ -132,7 +135,8 @@ per_answer = pd.DataFrame(
             "question": turn.question,
             "LLM calls": len(turn.usage),
             "tokens": turn.total.tokens,
-            "cost (USD)": turn.total.cost if turn.total.cost_known else None,
+            "cost (USD)": turn.total.cost,
+            "all costs reported": turn.total.cost_known,
         }
         for number, turn in turns
     ]
@@ -144,9 +148,10 @@ with st.container(horizontal=True):
     st.metric("Total tokens", f"{total.tokens:,}", border=True)
     st.metric(
         "Total cost",
-        f"${total.cost:.4f}" if total.cost_known else "not reported",
+        f"${total.cost:.4f}" + ("" if total.cost_known else " + not reported"),
         border=True,
-        help="Includes LLM calls of refused messages, which are not in the history.",
+        help="Includes LLM calls of refused messages, which are not in the history. "
+        "'+ not reported': a provider did not report the cost of some calls.",
     )
 
 st.subheader("Tool calls")
@@ -159,14 +164,7 @@ calls = [
 if not calls:
     st.info("No tool calls in this Conversation yet.")
 for number, call, turn in calls:
-    result = next(
-        (
-            event
-            for event in turn.events
-            if isinstance(event, ToolResultEvent) and event.call_id == call.call_id
-        ),
-        None,
-    )
+    result, card = turn.tool_result(call.call_id)
     failed = result is not None and result.is_error
     icon = ":material/error:" if failed else ":material/build:"
     with st.expander(f"Question {number}: {call.name}", icon=icon):
@@ -174,6 +172,17 @@ for number, call, turn in calls:
         st.json(call.args)
         st.markdown("**Result**" + (" (error)" if failed else ""))
         st.code(result.content if result else "(no result)", language=None, wrap_lines=True)
+        if isinstance(card, CitationsEvent):
+            st.markdown(
+                "\n".join(
+                    f"{r.number}. [{escape_markdown(r.title)}]({r.url})"
+                    if r.url
+                    else f"{r.number}. {escape_markdown(r.title)}"
+                    for r in card.results
+                )
+            )
+        elif card is not None:
+            AnswerView({}).show(card)  # the same card as on MAIN: Job Info, letter, chart, …
 
 st.subheader("Security")
 settings = load_settings()

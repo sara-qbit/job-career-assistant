@@ -175,3 +175,13 @@ def test_evaluation_page_shows_every_section_for_the_conversation(tmp_path, monk
     assert [button.proto.label for button in downloads] == ["Markdown", "JSON"]
     text = " ".join(element.value for element in app.markdown)
     assert "python engineer" in text  # a query variant of the RAG process
+
+
+def test_evaluation_page_of_a_new_conversation_explains_that_it_is_empty():
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+
+    app.switch_page("app_pages/evaluation.py").run()
+
+    assert not app.exception
+    assert [header.value for header in app.subheader] == EVALUATION_SECTIONS
+    assert any("No questions in this Conversation yet" in info.value for info in app.info)

@@ -46,3 +46,22 @@ def test_json_export_reads_back_as_the_same_conversation(tmp_path):
 
     assert Conversation.model_validate_json(exported) == conversation
     assert json.loads(exported)["total"] == {"tokens": 385, "cost": 0.0035, "cost_known": True}
+
+
+def test_cost_not_reported_by_a_provider_keeps_the_known_part(tmp_path):
+    service = chat(
+        tmp_path,
+        chat_store(tmp_path),
+        [
+            with_usage(AIMessage(content="Hi"), 100, 10, 0.001),
+            with_usage(AIMessage(content="Hello again"), 10, 2, None),
+        ],
+    )
+    list(service.send("c1", "hello"))
+    list(service.send("c1", "hello again"))
+
+    markdown = conversation_markdown(service.conversation("c1"), title="hello")
+
+    assert "110 tokens · $0.0010" in markdown
+    assert "12 tokens · cost not reported" in markdown
+    assert markdown.rstrip().endswith("**Total:** 122 tokens · $0.0010 + not reported")

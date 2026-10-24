@@ -214,8 +214,13 @@ class UsageTotal(BaseModel):
         return total
 
     def describe(self) -> str:
-        """E.g. "3,192 tokens · $0.0005"."""
-        cost = f"${self.cost:.4f}" if self.cost_known else "cost not reported"
+        """E.g. "3,192 tokens · $0.0005", or "… · $0.0005 + not reported" if a cost is missing."""
+        if self.cost_known:
+            cost = f"${self.cost:.4f}"
+        elif self.cost:
+            cost = f"${self.cost:.4f} + not reported"
+        else:
+            cost = "cost not reported"
         return f"{self.tokens:,} tokens · {cost}"
 
 

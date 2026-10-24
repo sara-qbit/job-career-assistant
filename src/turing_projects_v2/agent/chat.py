@@ -170,6 +170,16 @@ type AnswerEvent = Annotated[
 ]
 
 
+TOOL_CARD_EVENTS = (
+    CitationsEvent,
+    JobDescriptionEvent,
+    JobInfoEvent,
+    CoverLetterEvent,
+    MarketStatsEvent,
+)
+"""Events that show a tool's artifact; each directly follows its ToolResultEvent."""
+
+
 class Turn(BaseModel):
     """One question of a stored Conversation, the events of its answer and their token usage."""
 
@@ -181,6 +191,15 @@ class Turn(BaseModel):
     @property
     def total(self) -> UsageTotal:
         return UsageTotal.of(self.usage)
+
+    def tool_result(self, call_id: str) -> tuple[ToolResultEvent | None, AnswerEvent | None]:
+        """The result of tool call `call_id`, and the card it produced (Job Info, chart, …)."""
+        for index, event in enumerate(self.events):
+            if isinstance(event, ToolResultEvent) and event.call_id == call_id:
+                following = self.events[index + 1] if index + 1 < len(self.events) else None
+                is_card = isinstance(following, TOOL_CARD_EVENTS)
+                return event, following if is_card else None
+        return None, None
 
 
 class Conversation(BaseModel):
