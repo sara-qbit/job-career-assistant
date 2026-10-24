@@ -9,7 +9,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from turing_projects_v2.errors import ConfigError, DataValidationError
@@ -55,6 +55,15 @@ class LetterTemplate(BaseModel):
         return set(GAP_PATTERN.findall(self.text))
 
 
+class NotStatedWording(BaseModel):
+    """A Letter Template's wording for a summary gap whose Job Info summary is not stated."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    company_vision: str = "company's goals"
+    role_summary: str = "contribute to this role"
+
+
 class CandidateProfile(BaseModel):
     """The facts about the candidate, supplied by the candidate."""
 
@@ -70,6 +79,8 @@ class CandidateProfile(BaseModel):
     github: str
     target_roles: dict[str, str]
     letter_templates: dict[str, LetterTemplate] = {}
+    not_stated_wording: dict[str, NotStatedWording] = {}
+    """Per Letter Template name; templates without an entry get the default wording."""
 
     @field_validator("target_roles")
     @classmethod
@@ -79,6 +90,15 @@ class CandidateProfile(BaseModel):
             raise ValueError(f"no Letter Template mapped for {', '.join(sorted(unmapped))}")
         return target_roles
 
+    @model_validator(mode="after")
+    def wording_is_for_known_templates(self) -> CandidateProfile:
+        unknown = self.not_stated_wording.keys() - set(self.target_roles.values())
+        if unknown:
+            raise ValueError(
+                f"not_stated_wording for unknown templates: {', '.join(sorted(unknown))}"
+            )
+        return self
+
     @property
     def missing_templates(self) -> dict[str, str]:
         """Target Roles whose Letter Template file does not exist yet (role -> template name)."""
@@ -87,6 +107,10 @@ class CandidateProfile(BaseModel):
             for role, template in self.target_roles.items()
             if template not in self.letter_templates
         }
+
+    def wording_for(self, template: LetterTemplate) -> NotStatedWording:
+        """The template's wording for summary gaps whose Job Info summary is not stated."""
+        return self.not_stated_wording.get(template.name, NotStatedWording())
 
     def template_for(self, target_role: str) -> LetterTemplate:
         if target_role not in self.target_roles:

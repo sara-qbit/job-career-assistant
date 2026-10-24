@@ -1,0 +1,17 @@
+{{candidate_name}}
+{{candidate_street}}
+{{candidate_city}}, {{candidate_postal_code}}
+{{candidate_country}}
+Tel.: {{candidate_phone}}
+
+
+{{company_name}}
+{{company_address}}
+
+Dear Mr/Ms Hiring Manager,
+I am writing to apply for the {{work_type}} position of {{job_name}} at {{company_name}}. I am highly motivated to take on a responsible and dedicated role and to support top management committees in {{role_summary}}
+During my time as Innovation Manager at the 6G Health Institute (a tech startup), I played a key role in supporting senior leadership to identify new scientific and technological approaches for advancing our projects. I supported innovation processes from idea generation through to prototype implementation and evaluation. I successfully established seamless collaboration and effective knowledge transfer among universities, research institutes, and industry partners. Together with my team, I implemented new business models focused on promoting digital transformation. My responsibilities also included analyzing existing EU projects, supporting the development of new project-related business models, and contributing to various stages of national and international funding applications, including BMBF/BMFTR and EU calls for proposals. I engaged in intensive exchanges regarding science, society, and the environment with both the internal team and external partners. I am very eager to extend my experience to {{company_vision}}
+During my work at the Budapest University of Technology and Economics, I further developed my ability to analyze and select suitable strategies for solving complex engineering challenges in the fields of digitalization and data science. I am fluent in German, English, French, and Arabic.
+I would welcome the opportunity to discuss in an interview how I can contribute to the goals of {{company_name}}. I look forward to hearing from you.
+Yours sincerely,
+{{candidate_name}}

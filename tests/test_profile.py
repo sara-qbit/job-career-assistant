@@ -72,8 +72,29 @@ def test_ai_letter_template_marks_its_gaps():
     }
 
 
-def test_missing_grant_template_is_reported_not_fatal():
+def test_grant_management_uses_the_grant_letter_template_with_the_same_gaps():
     profile = load_profile(CANDIDATE_DIR)
+
+    template = profile.template_for("Grant Management Specialist")
+
+    assert template.name == "grant"
+    assert "support top management committees in {{role_summary}}" in template.text
+    assert template.gaps == load_profile(CANDIDATE_DIR).template_for("AI Engineer").gaps - {
+        "github"
+    }
+    assert profile.missing_templates == {}
+
+
+def test_each_letter_template_has_its_not_stated_wording():
+    profile = load_profile(CANDIDATE_DIR)
+
+    for role in ["AI Engineer", "Grant Management Specialist"]:
+        template = profile.template_for(role)
+        assert template.name in profile.not_stated_wording
+
+
+def test_missing_template_is_reported_not_fatal(tmp_path):
+    profile = load_profile(write_candidate_dir(tmp_path, PROFILE_TOML, {"ai": "Hi {{job_name}}"}))
 
     assert profile.missing_templates == {"Grant Management Specialist": "grant"}
     with pytest.raises(ConfigError, match=r"Grant Management Specialist.*grant\.txt"):
@@ -112,4 +133,12 @@ def test_profile_must_map_every_target_role(tmp_path):
     candidate_dir = write_candidate_dir(tmp_path, profile_without_grant, {"ai": "Hi"})
 
     with pytest.raises(DataValidationError, match="Grant Management Specialist"):
+        load_profile(candidate_dir)
+
+
+def test_not_stated_wording_for_an_unknown_template_is_rejected(tmp_path):
+    profile = PROFILE_TOML + '\n[not_stated_wording.grnat]\nrole_summary = "this role"\n'
+    candidate_dir = write_candidate_dir(tmp_path, profile, {"ai": "Hi"})
+
+    with pytest.raises(DataValidationError, match="grnat"):
         load_profile(candidate_dir)

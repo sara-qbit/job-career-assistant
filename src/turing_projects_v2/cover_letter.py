@@ -16,25 +16,24 @@ from turing_projects_v2.errors import ConfigError, UserInputError
 from turing_projects_v2.job_info import NOT_STATED, create_job_info
 from turing_projects_v2.judge import Judge, Verdict
 from turing_projects_v2.llm import ask_structured
-from turing_projects_v2.profile import GAP_PATTERN, CandidateProfile
+from turing_projects_v2.profile import GAP_PATTERN, CandidateProfile, NotStatedWording
 from turing_projects_v2.prompts import load_prompt
 from turing_projects_v2.store import Company, CoverLetter, JobInfo, JobStore, LetterCheck
 
 
 class LetterGaps(BaseModel):
     company_vision: str = Field(
-        description='completes "...support the top high management in achieving the"'
+        description="the words that complete the template sentence ending in this gap, "
+        "written from the company vision"
     )
-    role_summary: str = Field(description='completes "I am highly motivated to"')
+    role_summary: str = Field(
+        description="the words that complete the template sentence ending in this gap, "
+        "written from the role summary"
+    )
 
 
 # The gaps the LLM writes; each has the name of the Job Info summary it is written from.
 WRITTEN_GAPS = ("company_vision", "role_summary")
-
-# The wording of a gap whose Job Info summary is not stated in the posting.
-NOT_STATED_WORDING = LetterGaps(
-    company_vision="company's goals", role_summary="contribute to this role"
-)
 
 
 def write_cover_letter(
@@ -62,7 +61,8 @@ def write_cover_letter(
             f"Job Posting {job_id} has no company name, so no Cover Letter can be written for it."
         )
     company = store.get_company(posting.company_id) if posting.company_id is not None else None
-    gaps = _written_gaps(template.text, info, llm)
+    wording = profile.wording_for(template)
+    gaps = _written_gaps(template.text, info, wording, llm)
     # Judged against the posting itself, so a fabricated Job Info summary cannot pass on.
     sources = {
         "company_vision": company.description if company else None,
@@ -75,7 +75,7 @@ def write_cover_letter(
         if verdict is not None and verdict.value == "fabricated"
     }
     if fabricated:
-        rewrite = _written_gaps(template.text, info, llm, fabricated, gaps)
+        rewrite = _written_gaps(template.text, info, wording, llm, fabricated, gaps)
         gaps = gaps.model_copy(update={gap: getattr(rewrite, gap) for gap in fabricated})
         verdicts |= {gap: _judged(judge, gap, gaps, info, sources) for gap in fabricated}
     values = {
@@ -112,24 +112,29 @@ def write_cover_letter(
 def _written_gaps(
     template: str,
     info: JobInfo,
+    wording: NotStatedWording,
     llm: BaseChatModel,
     fabricated: dict[str, str] | None = None,
     previous: LetterGaps | None = None,
 ) -> LetterGaps:
     """The summary gaps written from the Job Info, each ending its sentence with a full stop.
 
-    A summary not stated in the posting gets fixed wording. For a rewrite, `fabricated` holds
-    the judge's reason per gap of the `previous` wording.
+    A summary not stated in the posting gets the template's fixed `wording`. For a rewrite,
+    `fabricated` holds the judge's reason per gap of the `previous` wording.
     """
     stated = {gap: getattr(info, gap) != NOT_STATED for gap in WRITTEN_GAPS}
-    written = NOT_STATED_WORDING
+    written: LetterGaps | NotStatedWording = wording
     if any(stated.values()):
+        beginnings = "\n".join(
+            f'- {gap} completes: "{_sentence_beginning(template, gap)}"' for gap in WRITTEN_GAPS
+        )
         messages = [
             SystemMessage(load_prompt("cover_letter")),
             HumanMessage(
                 f"<letter_template>\n{template}\n</letter_template>\n\n"
                 f"<job_info_data>\nRole summary: {info.role_summary}\n"
-                f"Company vision: {info.company_vision}\n</job_info_data>"
+                f"Company vision: {info.company_vision}\n</job_info_data>\n\n"
+                f"Gaps to write:\n{beginnings}"
             ),
         ]
         if fabricated and previous:
@@ -146,10 +151,17 @@ def _written_gaps(
         written = ask_structured(llm, LetterGaps, messages)
     return LetterGaps(
         **{
-            gap: _sentence_end(getattr(written if is_stated else NOT_STATED_WORDING, gap))
+            gap: _sentence_end(getattr(written if is_stated else wording, gap))
             for gap, is_stated in stated.items()
         }
     )
+
+
+def _sentence_beginning(template: str, gap: str) -> str:
+    """The words of the template sentence before `{{gap}}`, e.g. "I am highly motivated to"."""
+    before = template.split(f"{{{{{gap}}}}}", 1)[0]
+    sentence = re.split(r"(?<=[.!?:])\s+|\n", before)[-1]
+    return sentence.strip()
 
 
 def _judged(

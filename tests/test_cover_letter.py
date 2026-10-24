@@ -30,7 +30,16 @@ Yours sincerely,
 """
 
 
-def profile(template=TEMPLATE):
+GRANT_TEMPLATE = """\
+{{candidate_name}}
+Dear Hiring Manager,
+I apply for the {{work_type}} position of {{job_name}} at {{company_name}}. I want to support \
+committees in {{role_summary}}
+I am eager to extend my experience to {{company_vision}}
+"""
+
+
+def profile(template=TEMPLATE, **options):
     return CandidateProfile(
         name="Ada Example",
         street="Main Street 1",
@@ -46,7 +55,11 @@ def profile(template=TEMPLATE):
             "Quantum Software Developer": "ai",
             "Grant Management Specialist": "grant",
         },
-        letter_templates={"ai": LetterTemplate(name="ai", text=template)},
+        letter_templates={
+            "ai": LetterTemplate(name="ai", text=template),
+            "grant": LetterTemplate(name="grant", text=GRANT_TEMPLATE),
+        },
+        **options,
     )
 
 
@@ -260,9 +273,12 @@ def test_each_letter_is_saved_with_its_checks_verdicts_and_date(tmp_path):
 def test_a_target_role_without_letter_template_gets_a_clear_message(tmp_path):
     store = letter_store(tmp_path)
     store.set_target_roles([(1, "Grant Management Specialist")])
+    without_grant = profile().model_copy(
+        update={"letter_templates": {"ai": LetterTemplate(name="ai", text=TEMPLATE)}}
+    )
 
     with pytest.raises(UserInputError, match=r"No Letter Template for .*Grant Management"):
-        write_cover_letter(1, store, profile(), FakeChatModel(responses=[]), FakeJudge())
+        write_cover_letter(1, store, without_grant, FakeChatModel(responses=[]), FakeJudge())
 
 
 def test_kaggle_placeholders_in_the_company_address_are_left_out(tmp_path):
@@ -290,3 +306,43 @@ def test_the_tool_reply_warns_about_fabricated_text_without_the_letter(tmp_path)
     assert "Company vision: Affordable is not in the Job Info." in reply.text
     assert "Ada Example" not in reply.text and "Main Street" not in reply.text
     assert reply.artifact["text"].startswith("Ada Example, Main Street 1")
+
+
+GRANT_GAPS = LetterGaps(
+    company_vision="the field of affordable space travel",
+    role_summary="building RAG pipelines in Python for clients",
+)
+
+
+def test_grant_jobs_get_the_grant_template_written_to_its_own_sentences(tmp_path):
+    store = letter_store(tmp_path)
+    store.set_target_roles([(1, "Grant Management Specialist")])
+    llm = FakeChatModel(responses=[GRANT_GAPS])
+
+    letter = write_cover_letter(1, store, profile(), llm, FakeJudge())
+
+    assert letter.template_name == "grant"
+    assert letter.text == (
+        "Ada Example\n"
+        "Dear Hiring Manager,\n"
+        "I apply for the Full-time position of AI Engineer at Acme Corp. I want to support "
+        "committees in building RAG pipelines in Python for clients.\n"
+        "I am eager to extend my experience to the field of affordable space travel.\n"
+    )
+    assert all(check.passed for check in letter.checks)
+    prompt = llm.calls[0][-1].text
+    assert '- role_summary completes: "I want to support committees in"' in prompt
+    assert '- company_vision completes: "I am eager to extend my experience to"' in prompt
+
+
+def test_summaries_not_stated_get_the_templates_own_wording(tmp_path):
+    store = letter_store(tmp_path, role_summary=NOT_STATED, company_vision=NOT_STATED)
+    store.set_target_roles([(1, "Grant Management Specialist")])
+    wording = {"grant": {"role_summary": "the duties of this role", "company_vision": "your field"}}
+
+    letter = write_cover_letter(
+        1, store, profile(not_stated_wording=wording), FakeChatModel(responses=[]), FakeJudge()
+    )
+
+    assert "support committees in the duties of this role.\n" in letter.text
+    assert "extend my experience to your field.\n" in letter.text
