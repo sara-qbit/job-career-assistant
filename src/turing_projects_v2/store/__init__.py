@@ -5,6 +5,7 @@ Callers use domain operations only; the SQL stays inside this module.
 
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -87,6 +88,11 @@ class Company(BaseModel):
 
     company_id: int
     description: str | None
+    address: str | None
+    city: str | None
+    state: str | None
+    zip_code: str | None
+    country: str | None
 
 
 class JobInfo(BaseModel):
@@ -101,6 +107,50 @@ class JobInfo(BaseModel):
     role_summary_verdict: Verdict | None
     """The judge's verdict on the role summary; None when there was nothing to check."""
     company_vision_verdict: Verdict | None
+
+
+class LetterCheck(BaseModel):
+    """One deterministic check of a Cover Letter."""
+
+    name: str
+    passed: bool
+
+
+class CoverLetter(BaseModel):
+    """A Letter Template filled in for one Job Posting, with its check results."""
+
+    job_id: int
+    target_role: str
+    template_name: str
+    text: str
+    checks: list[LetterCheck]
+    company_vision_verdict: Verdict | None
+    """The judge's verdict on the written company vision gap; None for fixed wording."""
+    role_summary_verdict: Verdict | None
+    rewritten: bool
+    """Whether a gap judged fabricated was written a second time."""
+    created_at: datetime
+
+    @property
+    def verdicts(self) -> dict[str, Verdict | None]:
+        """The judge's verdict per written gap, by display name."""
+        return {
+            "Company vision": self.company_vision_verdict,
+            "Role summary": self.role_summary_verdict,
+        }
+
+    @property
+    def failed_checks(self) -> list[str]:
+        return [check.name for check in self.checks if not check.passed]
+
+    @property
+    def fabricated(self) -> dict[str, str]:
+        """The judge's reason per written gap still judged fabricated, by display name."""
+        return {
+            name: verdict.reason
+            for name, verdict in self.verdicts.items()
+            if verdict is not None and verdict.value == "fabricated"
+        }
 
 
 class TokenUsage(BaseModel):
@@ -142,6 +192,13 @@ class JobStore:
                 "company_vision TEXT NOT NULL, role_summary_verdict TEXT, "
                 "role_summary_reason TEXT, company_vision_verdict TEXT, "
                 "company_vision_reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            # The whole letter as JSON, plus the columns needed to find it.
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS cover_letters ("
+                "id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES postings (job_id), "
+                "target_role TEXT NOT NULL, template_name TEXT NOT NULL, letter TEXT NOT NULL, "
+                "created_at TEXT NOT NULL)"
             )
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS token_usage ("
@@ -231,7 +288,8 @@ class JobStore:
 
     def get_company(self, company_id: int) -> Company | None:
         row = self._db.execute(
-            "SELECT company_id, description FROM companies WHERE company_id = ?",
+            "SELECT company_id, description, address, city, state, zip_code, country "
+            "FROM companies WHERE company_id = ?",
             (company_id,),
         ).fetchone()
         return Company.model_validate(dict(row)) if row else None
@@ -271,6 +329,27 @@ class JobStore:
                 Verdict(value=value, reason=reason) if value is not None else None
             )
         return JobInfo.model_validate(fields)
+
+    def save_cover_letter(self, letter: CoverLetter) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT INTO cover_letters "
+                "(job_id, target_role, template_name, letter, created_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    letter.job_id,
+                    letter.target_role,
+                    letter.template_name,
+                    letter.model_dump_json(),
+                    letter.created_at.isoformat(),
+                ),
+            )
+
+    def cover_letters(self, job_id: int) -> list[CoverLetter]:
+        """Every saved Cover Letter for the posting, oldest first."""
+        rows = self._db.execute(
+            "SELECT letter FROM cover_letters WHERE job_id = ? ORDER BY id", (job_id,)
+        ).fetchall()
+        return [CoverLetter.model_validate_json(row["letter"]) for row in rows]
 
     def record_token_usage(self, usage: TokenUsage) -> None:
         with self._db:

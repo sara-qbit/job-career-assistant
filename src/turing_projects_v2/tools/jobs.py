@@ -1,5 +1,5 @@
-"""The job tools: `search_jobs` (the Retriever), `get_job_description` (verbatim, no LLM) and
-`create_job_info` (summaries checked by the judge).
+"""The job tools: `search_jobs` (the Retriever), `get_job_description` (verbatim, no LLM),
+`create_job_info` (summaries checked by the judge) and `write_cover_letter`.
 
 Each tool returns a short text for the LLM plus an artifact (a JSON-ready dict) that the Chat
 service turns into answer events. Expected failures raise AppError subclasses; the agent hands
@@ -12,9 +12,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel
 
-from turing_projects_v2 import job_info
+from turing_projects_v2 import cover_letter, job_info
 from turing_projects_v2.errors import UserInputError
 from turing_projects_v2.judge import Judge
+from turing_projects_v2.profile import CandidateProfile
 from turing_projects_v2.rag import retriever
 from turing_projects_v2.rag.indexer import NOT_STATED
 from turing_projects_v2.store import JobStore
@@ -36,9 +37,9 @@ def job_tools(
     collection: Collection,
     embedder: Embeddings,
     judge: Judge,
+    profile: CandidateProfile,
 ) -> list[BaseTool]:
-    """The tools `search_jobs`, `get_job_description` and `create_job_info`, bound to the given
-    services."""
+    """The job tools, bound to the given services."""
 
     @tool(response_format="content_and_artifact")
     def search_jobs(question: str) -> tuple[str, dict]:
@@ -117,4 +118,28 @@ def job_tools(
         ]
         return "\n".join(lines), info.model_dump(mode="json")
 
-    return [search_jobs, get_job_description, create_job_info]
+    @tool(response_format="content_and_artifact")
+    def write_cover_letter(job_id: int) -> tuple[str, dict]:
+        """Write the candidate's Cover Letter for one Job Posting from their Letter Template and
+        show it with its check results and download buttons.
+
+        Args:
+            job_id: the job ID of the posting (as listed in the search results).
+        """
+        letter = cover_letter.write_cover_letter(job_id, store, profile, llm, judge)
+        failed = letter.failed_checks
+        fabricated = [f"{name}: {reason}" for name, reason in letter.fabricated.items()]
+        # The letter itself holds the candidate's personal details, so it stays out of the reply.
+        lines = [
+            f"The Cover Letter for job ID {job_id} is now shown to the candidate in its own box "
+            "with its checks and download buttons; do not repeat it.",
+            f"Failed exact checks: {', '.join(failed)}" if failed else "All exact checks passed.",
+            *(
+                ["Still judged fabricated after one rewrite (warn the candidate):", *fabricated]
+                if fabricated
+                else ["The judge found no fabricated text."]
+            ),
+        ]
+        return "\n".join(lines), letter.model_dump(mode="json")
+
+    return [search_jobs, get_job_description, create_job_info, write_cover_letter]

@@ -10,6 +10,7 @@ from turing_projects_v2.agent.agent import TOOL_CALL_CAP_ANSWER
 from turing_projects_v2.agent.chat import (
     ChatService,
     CitationsEvent,
+    CoverLetterEvent,
     ErrorEvent,
     JobDescriptionEvent,
     JobInfoEvent,
@@ -20,11 +21,14 @@ from turing_projects_v2.agent.chat import (
     UsageEvent,
 )
 from turing_projects_v2.agent.memory import open_checkpointer
+from turing_projects_v2.config import PROJECT_ROOT
+from turing_projects_v2.cover_letter import LetterGaps
 from turing_projects_v2.errors import ExternalAPIError
 from turing_projects_v2.fakes import FakeChatModel, FakeEmbedder, FakeJudge
 from turing_projects_v2.importer import import_kaggle
 from turing_projects_v2.job_info import JobSummaries
 from turing_projects_v2.judge import Verdict
+from turing_projects_v2.profile import load_profile
 from turing_projects_v2.rag.indexer import index_knowledge_base, open_collection
 from turing_projects_v2.rag.retriever import QueryVariants, SearchQuery
 from turing_projects_v2.store import JobStore
@@ -70,7 +74,16 @@ def chat_with(tmp_path, store, llm, judge=None, **options):
     embedder = FakeEmbedder()
     collection = open_collection(tmp_path / "chroma", "fake")
     index_knowledge_base(store, collection, embedder)
-    return ChatService(llm, store, collection, embedder, judge or FakeJudge(), **options)
+    profile = load_profile(PROJECT_ROOT / "candidate").model_copy(
+        update={
+            "name": "Ada Example",
+            "street": "Main Street 1",
+            "postal_code": "12345",
+            "city": "Sample Town",
+            "phone": "0123 456",
+        }
+    )
+    return ChatService(llm, store, collection, embedder, judge or FakeJudge(), profile, **options)
 
 
 def of_kind(events, kind):
@@ -154,6 +167,32 @@ def test_job_info_is_shown_with_verdicts_and_becomes_the_current_job(tmp_path, s
     assert shown.info.company_vision_verdict.reason == "Made up."
     assert service.conversation("c1").current_job_id == 1
     assert "<job_info_data>" in llm.calls[-1][-1].text
+
+
+def test_cover_letter_is_shown_and_personal_details_never_reach_the_llm(tmp_path, store):
+    llm = FakeChatModel(
+        responses=[
+            call("write_cover_letter", {"job_id": 1}),
+            JobSummaries(role_summary="Builds LLM apps.", company_vision="Builds rockets."),
+            LetterGaps(
+                company_vision="company's goal of building rockets", role_summary="build LLM apps"
+            ),
+            "Here is your Cover Letter.",
+        ]
+    )
+    service = chat_with(tmp_path, store, llm)
+
+    events = list(service.send("c1", "write the cover letter for job 1"))
+
+    assert of_kind(events, StatusEvent)[0].text.startswith("Writing the Cover Letter")
+    (shown,) = of_kind(events, CoverLetterEvent)
+    assert shown.letter.text.startswith("Ada Example\nMain Street 1\n")
+    assert "apply for Python LLM Engineer Full-time at Acme Corp." in shown.letter.text
+    assert all(check.passed for check in shown.letter.checks)
+    assert service.conversation("c1").current_job_id == 1
+    sent = "\n".join(message.text for messages in llm.calls for message in messages)
+    for detail in ["Ada Example", "Main Street", "0123 456", "12345"]:
+        assert detail not in sent
 
 
 def test_tool_error_is_returned_to_the_llm_and_answered_friendly(tmp_path, store):

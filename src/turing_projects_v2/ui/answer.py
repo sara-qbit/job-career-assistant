@@ -11,6 +11,7 @@ from streamlit.delta_generator import DeltaGenerator
 from turing_projects_v2.agent.chat import (
     AnswerEvent,
     CitationsEvent,
+    CoverLetterEvent,
     ErrorEvent,
     JobDescriptionEvent,
     JobInfoEvent,
@@ -20,10 +21,11 @@ from turing_projects_v2.agent.chat import (
     ToolResultEvent,
     UsageEvent,
 )
+from turing_projects_v2.documents import letter_docx, letter_pdf
 from turing_projects_v2.job_info import NOT_STATED
 from turing_projects_v2.judge import Verdict
 from turing_projects_v2.rag.retriever import SearchResult
-from turing_projects_v2.store import JobInfo
+from turing_projects_v2.store import CoverLetter, JobInfo
 
 CITATION = re.compile(r"\[(\d+)\](?!\()")
 
@@ -61,6 +63,51 @@ def show_job_info(info: JobInfo) -> None:
         for name, summary, verdict in summaries:
             st.markdown(f"**{name}:** {escape_markdown(summary)}")
             show_verdict(verdict)
+
+
+def show_cover_letter(letter: CoverLetter) -> None:
+    """The Cover Letter box: the letter, its check results and the downloads."""
+    with st.container(border=True):
+        st.markdown("**Cover Letter**")
+        if letter.failed_checks or letter.fabricated:
+            st.warning(
+                "Check this letter by hand before sending it: "
+                + "; ".join(
+                    [f"{name} check failed" for name in letter.failed_checks]
+                    + [f"{name} judged fabricated" for name in letter.fabricated]
+                ),
+                icon=":material/warning:",
+            )
+        # st.code keeps the letter's line breaks exactly as written.
+        st.code(letter.text, language=None, wrap_lines=True)
+        st.markdown("**Exact checks** (against the Job Info and the Letter Template)")
+        for check in letter.checks:
+            mark = ":material/check_circle:" if check.passed else ":material/cancel:"
+            st.markdown(f"{mark} {check.name}")
+        for name, verdict in letter.verdicts.items():
+            st.markdown(f"**{name}** (written by the AI)")
+            show_verdict(verdict)
+        if letter.rewritten:
+            st.caption("A gap judged fabricated was written a second time.")
+        stamp = letter.created_at.strftime("%Y%m%d-%H%M%S")
+        name = f"cover-letter-{letter.job_id}-{stamp}"
+        left, right = st.columns(2)
+        left.download_button(
+            "Download .docx",
+            letter_docx(letter.text),
+            file_name=f"{name}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key=f"{name}-docx",
+            icon=":material/description:",
+        )
+        right.download_button(
+            "Download PDF",
+            letter_pdf(letter.text),
+            file_name=f"{name}.pdf",
+            mime="application/pdf",
+            key=f"{name}-pdf",
+            icon=":material/picture_as_pdf:",
+        )
 
 
 def show_verdict(verdict: Verdict | None) -> None:
@@ -123,6 +170,9 @@ class AnswerView:
             case JobInfoEvent(info=info):
                 self._text_area = None
                 show_job_info(info)
+            case CoverLetterEvent(letter=letter):
+                self._text_area = None
+                show_cover_letter(letter)
             case UsageEvent(usage=usage):
                 self._tokens += usage.input_tokens + usage.output_tokens
                 if usage.cost is None:

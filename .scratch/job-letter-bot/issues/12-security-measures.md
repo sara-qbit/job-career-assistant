@@ -13,3 +13,5 @@
 - [ ] Secrets only in the environment file; startup check
 - [ ] Tool-call cap confirmed; security events written to a security log
 - [ ] Seam-3 tests for each measure
+
+**Note from 09:** The full Cover Letter (with the candidate's name, address and phone) is the `write_cover_letter` ToolMessage artifact, so the checkpointer (`data/conversations.sqlite`) stores it locally. The LLM never receives it: the tool reply leaves the letter out. Make sure no log, the Evaluation tab's tool-call view or the security log shows these details.

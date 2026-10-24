@@ -26,16 +26,18 @@ from turing_projects_v2.config import Settings
 from turing_projects_v2.errors import AppError, ExternalAPIError
 from turing_projects_v2.judge import Judge, open_judge
 from turing_projects_v2.llm import chat_model
+from turing_projects_v2.profile import CandidateProfile, load_profile
 from turing_projects_v2.rag.embeddings import load_embedder
 from turing_projects_v2.rag.indexer import open_collection
 from turing_projects_v2.rag.retriever import SearchOutcome, SearchResult
-from turing_projects_v2.store import JobInfo, JobStore, TokenUsage
+from turing_projects_v2.store import CoverLetter, JobInfo, JobStore, TokenUsage
 from turing_projects_v2.tools.jobs import JobDescription, job_tools
 
 TOOL_STATUS = {
     "search_jobs": "Searching the Knowledge Base",
     "get_job_description": "Fetching the Job Description",
     "create_job_info": "Creating the Job Info and checking it",
+    "write_cover_letter": "Writing the Cover Letter and checking it",
 }
 
 
@@ -85,6 +87,11 @@ class JobInfoEvent(BaseModel):
     info: JobInfo
 
 
+class CoverLetterEvent(BaseModel):
+    kind: Literal["cover_letter"] = "cover_letter"
+    letter: CoverLetter
+
+
 class UsageEvent(BaseModel):
     kind: Literal["usage"] = "usage"
     usage: TokenUsage
@@ -105,6 +112,7 @@ type AnswerEvent = Annotated[
     | CitationsEvent
     | JobDescriptionEvent
     | JobInfoEvent
+    | CoverLetterEvent
     | UsageEvent
     | ErrorEvent,
     Field(discriminator="kind"),
@@ -135,6 +143,7 @@ class ChatService:
         collection: Collection,
         embedder: Embeddings,
         judge: Judge,
+        profile: CandidateProfile,
         *,
         checkpointer: BaseCheckpointSaver | None = None,
         history_window: int = 20,
@@ -144,7 +153,7 @@ class ChatService:
         self._store = store
         self._agent = build_agent(
             llm,
-            job_tools(store, llm, collection, embedder, judge),
+            job_tools(store, llm, collection, embedder, judge, profile),
             checkpointer or InMemorySaver(),
             history_window=history_window,
             max_tool_calls=max_tool_calls,
@@ -217,6 +226,7 @@ def open_chat_service(settings: Settings) -> ChatService:
         open_collection(settings.chroma_dir, settings.embedding_model),
         embedder,
         open_judge(settings),
+        load_profile(settings.candidate_dir),
         checkpointer=open_checkpointer(settings.conversations_path),
         history_window=settings.history_window,
         max_tool_calls=settings.max_tool_calls,
@@ -257,6 +267,8 @@ def _update_events(message: Any) -> Iterator[AnswerEvent]:
             yield JobDescriptionEvent(description=JobDescription.model_validate(message.artifact))
         elif message.name == "create_job_info":
             yield JobInfoEvent(info=JobInfo.model_validate(message.artifact))
+        elif message.name == "write_cover_letter":
+            yield CoverLetterEvent(letter=CoverLetter.model_validate(message.artifact))
 
 
 class _UsageRecorder(BaseCallbackHandler):

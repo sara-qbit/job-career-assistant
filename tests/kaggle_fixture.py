@@ -79,8 +79,15 @@ def posting(job_id: int, title: str, **overrides: str) -> dict[str, str]:
     return row
 
 
-def write_kaggle_dataset(raw_dir: Path, postings: list[dict[str, str]] | None = None) -> Path:
-    """Write postings.csv and companies/companies.csv under `raw_dir`; return `raw_dir`."""
+def write_kaggle_dataset(
+    raw_dir: Path,
+    postings: list[dict[str, str]] | None = None,
+    company: dict[str, str] | None = None,
+) -> Path:
+    """Write postings.csv and companies/companies.csv under `raw_dir`; return `raw_dir`.
+
+    The one company is Acme Corp (ID 2774458); `company` overrides its columns.
+    """
     if postings is None:
         postings = [posting(job_id, title) for job_id, title in TITLES.items()]
     (raw_dir / "companies").mkdir(parents=True, exist_ok=True)
@@ -94,5 +101,6 @@ def write_kaggle_dataset(raw_dir: Path, postings: list[dict[str, str]] | None = 
         writer.writerow(
             dict.fromkeys(COMPANY_HEADER, "")
             | {"company_id": "2774458", "name": "Acme Corp", "description": "We build rockets."}
+            | (company or {})
         )
     return raw_dir
