@@ -85,6 +85,24 @@ class FakeEmbedder(Embeddings):
         return [digest[i % len(digest)] / 255 for i in range(self.dimensions)]
 
 
+class FakeReranker:
+    """Scores a passage by the first of `scores`' keys it contains (0 if none).
+
+    Records every (query, passage) pair it scores in `scored`.
+    """
+
+    def __init__(self, scores: dict[str, float]) -> None:
+        self.scores = scores
+        self.scored: list[tuple[str, str]] = []
+
+    def score(self, query: str, passages: list[str]) -> list[float]:
+        self.scored += [(query, passage) for passage in passages]
+        return [
+            next((score for key, score in self.scores.items() if key in passage), 0.0)
+            for passage in passages
+        ]
+
+
 class FakeScopeGuard:
     """Scope guard that returns scripted verdicts in order, then "on topic" once they run out."""
 

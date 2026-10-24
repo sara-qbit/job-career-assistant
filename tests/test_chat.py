@@ -15,6 +15,7 @@ from turing_projects_v2.agent.chat import (
     JobDescriptionEvent,
     JobInfoEvent,
     MarketStatsEvent,
+    SearchSettings,
     StatusEvent,
     TextEvent,
     ToolCallEvent,
@@ -25,12 +26,18 @@ from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.config import PROJECT_ROOT
 from turing_projects_v2.cover_letter import LetterGaps
 from turing_projects_v2.errors import ExternalAPIError
-from turing_projects_v2.fakes import FakeChatModel, FakeEmbedder, FakeJudge, FakeScopeGuard
+from turing_projects_v2.fakes import (
+    FakeChatModel,
+    FakeEmbedder,
+    FakeJudge,
+    FakeReranker,
+    FakeScopeGuard,
+)
 from turing_projects_v2.importer import import_kaggle
 from turing_projects_v2.job_info import JobSummaries
 from turing_projects_v2.judge import Verdict
 from turing_projects_v2.profile import load_profile
-from turing_projects_v2.rag.indexer import index_knowledge_base, open_collection
+from turing_projects_v2.rag.indexer import KnowledgeBase, index_knowledge_base, open_collection
 from turing_projects_v2.rag.retriever import QueryVariants, SearchQuery
 from turing_projects_v2.store import JobStore
 
@@ -71,10 +78,22 @@ def chat(tmp_path, store, responses):
     return chat_with(tmp_path, store, FakeChatModel(responses=responses))
 
 
-def chat_with(tmp_path, store, llm, judge=None, scope_guard=None, **options):
-    embedder = FakeEmbedder()
-    collection = open_collection(tmp_path / "chroma", "fake")
-    index_knowledge_base(store, collection, embedder)
+class FakeKnowledgeBases:
+    """Every embedding model name opens the same fake Knowledge Base; records the names asked."""
+
+    def __init__(self, tmp_path, store):
+        embedder = FakeEmbedder()
+        collection = open_collection(tmp_path / "chroma", "fake")
+        index_knowledge_base(store, collection, embedder)
+        self.knowledge_base = KnowledgeBase(collection, embedder)
+        self.opened: list[str] = []
+
+    def __call__(self, name):
+        self.opened.append(name)
+        return self.knowledge_base
+
+
+def chat_with(tmp_path, store, llm, judge=None, scope_guard=None, knowledge_bases=None, **options):
     profile = load_profile(PROJECT_ROOT / "candidate").model_copy(
         update={
             "name": "Ada Example",
@@ -87,8 +106,7 @@ def chat_with(tmp_path, store, llm, judge=None, scope_guard=None, **options):
     return ChatService(
         llm,
         store,
-        collection,
-        embedder,
+        knowledge_bases or FakeKnowledgeBases(tmp_path, store),
         judge or FakeJudge(),
         profile,
         scope_guard=scope_guard or FakeScopeGuard(),
@@ -412,3 +430,77 @@ def test_tool_call_cap_counts_per_question(tmp_path, store):
     events = list(service.send("c1", "and again"))
 
     assert len(executed_tool_calls(events)) == 4
+
+
+def test_search_uses_the_embedding_model_chosen_for_the_turn(tmp_path, store):
+    knowledge_bases = FakeKnowledgeBases(tmp_path, store)
+    llm = FakeChatModel(responses=[*search_steps(), "Found [1]"])
+    service = chat_with(tmp_path, store, llm, knowledge_bases=knowledge_bases)
+
+    list(service.send("c1", "python jobs", SearchSettings(embedding_model="qwen3", rerank=False)))
+
+    assert knowledge_bases.opened == ["qwen3"]
+
+
+def cited_job_ids(events):
+    (citations,) = of_kind(events, CitationsEvent)
+    return [result.job_id for result in citations.results]
+
+
+@pytest.mark.parametrize(
+    ("preferred", "expected_order"), [("Grants Officer", [2, 1]), ("Python LLM Engineer", [1, 2])]
+)
+def test_switched_on_reranker_decides_the_order(tmp_path, store, preferred, expected_order):
+    reranker = FakeReranker({preferred: 0.9})
+    llm = FakeChatModel(responses=[*search_steps(), "Found [1]"])
+    service = chat_with(tmp_path, store, llm, reranker=reranker)
+
+    events = list(
+        service.send("c1", "python jobs", SearchSettings(embedding_model="gemini", rerank=True))
+    )
+
+    assert cited_job_ids(events) == expected_order
+
+
+def test_switched_off_reranker_is_not_used(tmp_path, store):
+    reranker = FakeReranker({"Grants Officer": 0.9})
+    llm = FakeChatModel(responses=[*search_steps(), "Found [1]"])
+    service = chat_with(tmp_path, store, llm, reranker=reranker)
+
+    events = list(
+        service.send("c1", "python jobs", SearchSettings(embedding_model="gemini", rerank=False))
+    )
+
+    assert set(cited_job_ids(events)) == {1, 2}
+    assert reranker.scored == []
+
+
+def test_conversations_are_listed_newest_first_titled_by_their_first_question(tmp_path, store):
+    service = chat(tmp_path, store, ["Sure.", "Sure.", "Sure."])
+    list(service.send("c1", "python jobs"))
+    list(service.send("c2", "grant jobs in Texas"))
+
+    list(service.send("c1", "anything remote?"))
+
+    assert [(c.id, c.title) for c in service.conversations()] == [
+        ("c1", "python jobs"),
+        ("c2", "grant jobs in Texas"),
+    ]
+
+
+def test_long_first_question_is_shortened_for_the_title(tmp_path, store):
+    service = chat(tmp_path, store, ["Sure."])
+    question = "I am looking for a remote AI engineer role that involves LLM apps and Python"
+
+    list(service.send("c1", question))
+
+    (conversation,) = service.conversations()
+    assert conversation.title == "I am looking for a remote AI engineer role that involves…"
+
+
+def test_rejected_message_does_not_start_a_conversation(tmp_path, store):
+    service = chat(tmp_path, store, [])
+
+    list(service.send("c1", "   "))
+
+    assert service.conversations() == []

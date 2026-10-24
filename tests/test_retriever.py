@@ -5,7 +5,7 @@ from langchain_core.embeddings import Embeddings
 
 from tests.kaggle_fixture import posting, write_kaggle_dataset
 from turing_projects_v2.errors import DataValidationError, ExternalAPIError
-from turing_projects_v2.fakes import FakeChatModel
+from turing_projects_v2.fakes import FakeChatModel, FakeReranker
 from turing_projects_v2.importer import import_kaggle
 from turing_projects_v2.profile import TARGET_ROLES
 from turing_projects_v2.rag.indexer import index_knowledge_base, open_collection
@@ -268,3 +268,47 @@ def test_target_role_filter_offers_exactly_the_target_roles():
     offered = SearchFilters.model_json_schema()["properties"]["target_role"]["anyOf"][0]["enum"]
 
     assert set(offered) == TARGET_ROLES
+
+
+def python_and_grants_jobs(tmp_path, embedder):
+    return knowledge_base(
+        tmp_path,
+        embedder,
+        [
+            posting(1, "Python Engineer", description="Python and more Python."),
+            posting(2, "Grants Officer", description="Grants and a little python."),
+        ],
+        {1: "AI Engineer", 2: "Grant Management Specialist"},
+    )
+
+
+def test_reranker_reorders_the_fused_results(tmp_path, embedder):
+    collection = python_and_grants_jobs(tmp_path, embedder)
+    reranker = FakeReranker({"Grants Officer": 0.9, "Python Engineer": 0.2})
+
+    outcome = search_jobs(
+        "python jobs",
+        scripted_llm("python", ["python", "python developer", "python engineer"]),
+        collection,
+        embedder,
+        reranker=reranker,
+    )
+
+    assert [result.job_id for result in outcome.results] == [2, 1]
+    assert [result.score for result in outcome.results] == [0.9, 0.2]
+    assert outcome.trace.reranked == [(2, 0.9), (1, 0.2)]
+    assert all(query == "python" for query, _ in reranker.scored)
+
+
+def test_without_reranker_the_fusion_order_is_kept(tmp_path, embedder):
+    collection = python_and_grants_jobs(tmp_path, embedder)
+
+    outcome = search_jobs(
+        "python jobs",
+        scripted_llm("python", ["python", "python developer", "python engineer"]),
+        collection,
+        embedder,
+    )
+
+    assert [result.job_id for result in outcome.results] == [1, 2]
+    assert outcome.trace.reranked is None

@@ -4,15 +4,27 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from tests.test_chat import DESCRIPTION, call, chat, chat_store, search_steps
+from tests.test_chat import (
+    DESCRIPTION,
+    FakeKnowledgeBases,
+    call,
+    chat,
+    chat_store,
+    chat_with,
+    search_steps,
+)
 from turing_projects_v2.agent import chat as chat_module
+from turing_projects_v2.fakes import FakeChatModel, FakeReranker
 
 APP = Path(__file__).parents[1] / "src" / "turing_projects_v2" / "ui" / "app.py"
 
 
 @pytest.fixture(autouse=True)
-def settings(monkeypatch):
+def settings(tmp_path, monkeypatch):
+    """A test key, and a Chat service without answers unless a test sets its own."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    service = chat(tmp_path, chat_store(tmp_path), [])
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
     st.cache_resource.clear()
 
 
@@ -60,3 +72,58 @@ def test_reopening_the_page_restores_the_conversation(tmp_path, monkeypatch):
     markdown = [element.value for element in reopened.markdown]
     assert "python jobs" in markdown
     assert any(r"[\[1\]](https://www.linkedin.com/jobs/view/" in text for text in markdown)
+
+
+def test_sidebar_starts_with_gemini_and_the_reranker_on():
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+
+    assert not app.exception
+    assert app.sidebar.button(key="new_chat").label == "New chat"
+    assert app.sidebar.selectbox(key="embedding_model").value == "gemini"
+    assert app.sidebar.selectbox(key="embedding_model").options == [
+        "Gemini Embedding 2",
+        "Qwen3-Embedding-8B",
+        "MiniLM (local)",
+    ]
+    assert app.sidebar.toggle(key="rerank").value is True
+
+
+def test_sidebar_choices_are_used_for_the_search(tmp_path, monkeypatch):
+    store = chat_store(tmp_path)
+    knowledge_bases = FakeKnowledgeBases(tmp_path, store)
+    reranker = FakeReranker({"Grants Officer": 0.9})
+    llm = FakeChatModel(responses=[*search_steps(), "Found [1]"])
+    service = chat_with(tmp_path, store, llm, knowledge_bases=knowledge_bases, reranker=reranker)
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+
+    app.sidebar.selectbox(key="embedding_model").select("qwen3").run()
+    app.sidebar.toggle(key="rerank").set_value(False).run()
+    app.chat_input[0].set_value("python jobs").run()
+
+    assert not app.exception
+    assert knowledge_bases.opened == ["qwen3"]
+    assert reranker.scored == []
+
+
+def test_past_conversation_is_listed_and_reopens_on_click(tmp_path, monkeypatch):
+    responses = [*search_steps(), "#1 Python LLM Engineer [1]", "Hello!"]
+    service = chat(tmp_path, chat_store(tmp_path), responses)
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app.chat_input[0].set_value("python jobs").run()
+    first_id = app.query_params["c"]
+
+    app.sidebar.button(key="new_chat").click().run()
+    assert len(app.chat_message) == 0
+    app.chat_input[0].set_value("hi").run()
+    assert app.query_params["c"] != first_id
+
+    app.sidebar.button(key=f"conversation-{first_id}").click().run()
+
+    assert not app.exception
+    assert app.query_params["c"] == first_id
+    assert [element.value for element in app.chat_message[0].markdown] == ["python jobs"]
+    assert len(app.chat_message) == 2
+    titles = [button.label for button in app.sidebar.button if button.key != "new_chat"]
+    assert titles == ["hi", "python jobs"]

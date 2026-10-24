@@ -10,7 +10,7 @@ from turing_projects_v2.importer import import_kaggle
 from turing_projects_v2.job_info import NOT_STATED
 from turing_projects_v2.judge import Verdict
 from turing_projects_v2.profile import CandidateProfile, LetterTemplate
-from turing_projects_v2.rag.indexer import open_collection
+from turing_projects_v2.rag.indexer import KnowledgeBase, open_collection
 from turing_projects_v2.store import JobInfo, JobStore
 from turing_projects_v2.tools.jobs import job_tools
 
@@ -293,8 +293,8 @@ def test_kaggle_placeholders_in_the_company_address_are_left_out(tmp_path):
 def test_the_tool_reply_warns_about_fabricated_text_without_the_letter(tmp_path):
     judge = FakeJudge([FABRICATED, SUPPORTED, FABRICATED])
     llm = FakeChatModel(responses=[GAPS, REWRITTEN])
-    collection = open_collection(tmp_path / "chroma", "fake")
-    tools = job_tools(letter_store(tmp_path), llm, collection, FakeEmbedder(), judge, profile())
+    knowledge_base = KnowledgeBase(open_collection(tmp_path / "chroma", "fake"), FakeEmbedder())
+    tools = job_tools(letter_store(tmp_path), llm, lambda name: knowledge_base, judge, profile())
     (write,) = [tool for tool in tools if tool.name == "write_cover_letter"]
 
     reply = write.invoke(

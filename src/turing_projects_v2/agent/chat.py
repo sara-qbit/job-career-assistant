@@ -4,14 +4,13 @@ This is the seam the UI talks to; tests drive it with a scripted fake LLM.
 """
 
 import queue
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from functools import cache
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import openai
-from chromadb.api.models.Collection import Collection
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.outputs import LLMResult
@@ -28,8 +27,9 @@ from turing_projects_v2.judge import Judge, open_judge
 from turing_projects_v2.llm import chat_model
 from turing_projects_v2.profile import CandidateProfile, load_profile
 from turing_projects_v2.rag.embeddings import load_embedder
-from turing_projects_v2.rag.indexer import open_collection
-from turing_projects_v2.rag.retriever import SearchOutcome, SearchResult
+from turing_projects_v2.rag.indexer import KnowledgeBase, open_collection
+from turing_projects_v2.rag.reranker import CrossEncoderReranker, Reranker
+from turing_projects_v2.rag.retriever import SearchOutcome, SearchResult, SearchSettings
 from turing_projects_v2.security import (
     EXCERPT_LENGTH,
     LLMScopeGuard,
@@ -39,7 +39,14 @@ from turing_projects_v2.security import (
     looks_like_injection,
     redacted,
 )
-from turing_projects_v2.store import CoverLetter, JobInfo, JobStore, SecurityLogEntry, TokenUsage
+from turing_projects_v2.store import (
+    ConversationSummary,
+    CoverLetter,
+    JobInfo,
+    JobStore,
+    SecurityLogEntry,
+    TokenUsage,
+)
 from turing_projects_v2.tools.jobs import JobDescription, job_tools
 from turing_projects_v2.tools.stats import MarketStats, market_stats_tool
 
@@ -50,6 +57,10 @@ TOOL_STATUS = {
     "write_cover_letter": "Writing the Cover Letter and checking it",
     "job_market_stats": "Computing job market statistics",
 }
+
+
+TITLE_LENGTH = 60
+"""Longest Conversation title; the first question is cut at a word to fit."""
 
 
 OFF_TOPIC_ANSWER = (
@@ -172,24 +183,25 @@ class ChatService:
         self,
         llm: BaseChatModel,
         store: JobStore,
-        collection: Collection,
-        embedder: Embeddings,
+        knowledge_base: Callable[[str], KnowledgeBase],
         judge: Judge,
         profile: CandidateProfile,
         *,
         scope_guard: ScopeGuard,
+        reranker: Reranker | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
         history_window: int = 20,
         max_tool_calls: int = 6,
     ) -> None:
-        """`checkpointer` stores the Conversations (in memory if None)."""
+        """`knowledge_base(name)` opens the Knowledge Base of embedding model `name`;
+        `checkpointer` stores the Conversations (in memory if None)."""
         self._store = store
         self._profile = profile
         self._scope_guard = scope_guard
         self._agent = build_agent(
             llm,
             [
-                *job_tools(store, llm, collection, embedder, judge, profile),
+                *job_tools(store, llm, knowledge_base, judge, profile, reranker),
                 market_stats_tool(store),
             ],
             checkpointer or InMemorySaver(),
@@ -197,8 +209,12 @@ class ChatService:
             max_tool_calls=max_tool_calls,
         )
 
-    def send(self, conversation_id: str, message: str) -> Iterator[AnswerEvent]:
+    def send(
+        self, conversation_id: str, message: str, search: SearchSettings | None = None
+    ) -> Iterator[AnswerEvent]:
         """Run one turn of the Conversation; never raises for expected failures.
+
+        `search` is the embedding model and reranker choice for this turn's searches.
 
         Token usage of every LLM call (also those inside tools) is recorded in the store and
         yielded as a UsageEvent.
@@ -207,6 +223,7 @@ class ChatService:
         if problem is not None:
             yield self._security_event(conversation_id, "rejected_input", problem, message)
             return
+        self._store.touch_conversation(conversation_id, _title(message))
         if looks_like_injection(message):
             yield self._security_event(
                 conversation_id,
@@ -229,7 +246,9 @@ class ChatService:
             yield TextEvent(text=OFF_TOPIC_ANSWER)
             yield from _drained(usage_events)
             return
-        config = {**_thread(conversation_id), "callbacks": [recorder]}
+        config = _thread(conversation_id)
+        config["configurable"]["search"] = (search or SearchSettings()).model_dump()
+        config["callbacks"] = [recorder]
         capped = False
         stream = self._agent.stream(
             {"messages": [HumanMessage(message)]}, config, stream_mode=["messages", "updates"]
@@ -286,6 +305,10 @@ class ChatService:
         )
         return SecurityEvent(event_type=event_type, message=explanation)
 
+    def conversations(self) -> list[ConversationSummary]:
+        """Every Conversation, most recently used first."""
+        return self._store.conversations()
+
     def conversation(self, conversation_id: str) -> Conversation:
         """The stored Conversation (empty if unknown): its turns and its latest Search Results.
 
@@ -309,20 +332,34 @@ class ChatService:
 
 def open_chat_service(settings: Settings) -> ChatService:
     """The Chat service on the real store, Knowledge Base, Conversations and agent model."""
-    embedder = load_embedder(settings, settings.embedding_model)
+
+    @cache
+    def knowledge_base(name: str) -> KnowledgeBase:
+        # First the embedder: an unknown name must not create a collection.
+        embedder = load_embedder(settings, name)
+        return KnowledgeBase(open_collection(settings.chroma_dir, name), embedder)
+
+    knowledge_base(settings.embedding_model)  # fail at start, not on the first search
     llm = chat_model(settings, settings.agent_model)
     return ChatService(
         llm,
         JobStore(settings.database_path),
-        open_collection(settings.chroma_dir, settings.embedding_model),
-        embedder,
+        knowledge_base,
         open_judge(settings),
         load_profile(settings.candidate_dir),
         scope_guard=LLMScopeGuard(llm),
+        reranker=CrossEncoderReranker(),
         checkpointer=open_checkpointer(settings.conversations_path),
         history_window=settings.history_window,
         max_tool_calls=settings.max_tool_calls,
     )
+
+
+def _title(question: str) -> str:
+    question = " ".join(question.split())
+    if len(question) <= TITLE_LENGTH:
+        return question
+    return question[: TITLE_LENGTH - 1].rsplit(" ", 1)[0].rstrip(" ,.;:") + "…"
 
 
 def _drained(events: queue.SimpleQueue[UsageEvent]) -> Iterator[UsageEvent]:

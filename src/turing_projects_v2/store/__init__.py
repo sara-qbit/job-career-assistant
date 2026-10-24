@@ -5,7 +5,7 @@ Callers use domain operations only; the SQL stays inside this module.
 
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -162,6 +162,15 @@ _COUNT_BY = {
 }
 
 
+class ConversationSummary(BaseModel):
+    """A Conversation as the sidebar lists it; messages live in the agent checkpointer."""
+
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class SecurityLogEntry(BaseModel):
     """One blocked or flagged input, or another security event; never holds personal data."""
 
@@ -238,6 +247,11 @@ class JobStore:
                 "CREATE TABLE IF NOT EXISTS security_log ("
                 "id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, event_type TEXT NOT NULL, "
                 "excerpt TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS conversations ("
+                "id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, "
+                "updated_at TEXT NOT NULL)"
             )
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS token_usage ("
@@ -436,6 +450,24 @@ class JobStore:
         for row in rows:
             result.setdefault(row["label"], []).append(row["normalized_salary"])
         return result
+
+    def touch_conversation(self, conversation_id: str, title: str) -> None:
+        """Mark the Conversation as just used; `title` is kept only if it is new."""
+        now = datetime.now(UTC).isoformat()
+        with self._db:
+            self._db.execute(
+                "INSERT INTO conversations (id, title, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at",
+                (conversation_id, title, now, now),
+            )
+
+    def conversations(self) -> list[ConversationSummary]:
+        """Every Conversation, most recently used first."""
+        rows = self._db.execute(
+            "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
+        ).fetchall()
+        return [ConversationSummary.model_validate(dict(row)) for row in rows]
 
     def log_security_event(self, entry: SecurityLogEntry) -> None:
         with self._db:

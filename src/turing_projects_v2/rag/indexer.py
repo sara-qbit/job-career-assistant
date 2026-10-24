@@ -6,7 +6,7 @@ understandable on its own.
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 import chromadb
 from chromadb.api.models.Collection import Collection
@@ -20,6 +20,13 @@ from turing_projects_v2.store import JobPosting, JobStore
 NOT_STATED = "not stated"
 
 _SPLITTER = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+
+
+class KnowledgeBase(NamedTuple):
+    """One embedding model's collection, with the embedder that queries it."""
+
+    collection: Collection
+    embedder: Embeddings
 
 
 def open_collection(chroma_dir: Path, model_name: str) -> Collection:

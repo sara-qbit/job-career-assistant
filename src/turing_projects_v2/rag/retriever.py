@@ -4,6 +4,7 @@
 2. Multi-query: the LLM rewrites the search text as 3-4 query variants.
 3. Filtered similarity search in the Knowledge Base for the search text and each variant.
 4. Reciprocal Rank Fusion of the per-query rankings, de-duplicated by job ID.
+5. Optionally, a Reranker re-scores the best fused postings against the search text.
 """
 
 import re
@@ -18,9 +19,13 @@ from pydantic import BaseModel, Field
 
 from turing_projects_v2.llm import ask_structured
 from turing_projects_v2.prompts import load_prompt
+from turing_projects_v2.rag.reranker import Reranker
 
 # Constant from the original RRF paper (Cormack et al., 2009); damps the weight of top ranks.
 RRF_K = 60
+
+# Fused postings the Reranker re-scores.
+RERANK_TOP = 20
 
 # Chunks fetched per wanted posting; tagged postings have about 7 chunks on average.
 _CHUNKS_PER_POSTING = 10
@@ -66,6 +71,13 @@ class QueryVariants(BaseModel):
     )
 
 
+class SearchSettings(BaseModel):
+    """The candidate's search choices for one turn (the sidebar starts with these defaults)."""
+
+    embedding_model: str = "gemini"
+    rerank: bool = True
+
+
 class SearchResult(BaseModel):
     number: int
     job_id: int
@@ -93,6 +105,7 @@ class SearchTrace(BaseModel):
     filters: SearchFilters
     queries: list[QueryStage]
     fusion: list[tuple[int, float]]  # (job ID, RRF score), best first
+    reranked: list[tuple[int, float]] | None = None  # (job ID, Reranker score), best first
 
 
 class SearchOutcome(BaseModel):
@@ -108,8 +121,13 @@ def search_jobs(
     embedder: Embeddings,
     top_k: int = 5,
     per_query: int = 20,
+    reranker: Reranker | None = None,
 ) -> SearchOutcome:
-    """The `top_k` Job Postings that best match `question`, numbered from 1."""
+    """The `top_k` Job Postings that best match `question`, numbered from 1.
+
+    With a `reranker`, the best RERANK_TOP fused postings are re-scored (each by its chunk
+    closest to any query) and ordered by that score.
+    """
     query = ask_structured(
         llm, SearchQuery, [SystemMessage(load_prompt("self_query")), HumanMessage(question)]
     )
@@ -122,6 +140,7 @@ def search_jobs(
 
     stages: list[QueryStage] = []
     chunk_metadata: dict[int, Metadata] = {}
+    closest_chunk: dict[int, tuple[float, str]] = {}  # job ID -> (distance, chunk text)
     for text in [query.search_text, *variants.variants]:
         stage = QueryStage(query=text, job_ids=[], distances=[])
         if where is not None:
@@ -130,13 +149,16 @@ def search_jobs(
                 query_embeddings=[embedder.embed_query(text)],
                 n_results=per_query * _CHUNKS_PER_POSTING,
                 where=where or None,
-                include=["metadatas", "distances"],
+                include=["metadatas", "distances", "documents"],
             )
             metadatas = (found["metadatas"] or [[]])[0]
             distances = (found["distances"] or [[]])[0]
-            for metadata, distance in zip(metadatas, distances, strict=True):
+            documents = (found["documents"] or [[]])[0]
+            for metadata, distance, document in zip(metadatas, distances, documents, strict=True):
                 job_id = cast(int, metadata["job_id"])
                 chunk_metadata.setdefault(job_id, metadata)
+                if job_id not in closest_chunk or distance < closest_chunk[job_id][0]:
+                    closest_chunk[job_id] = (distance, document)
                 if job_id not in stage.job_ids and len(stage.job_ids) < per_query:
                     stage.job_ids.append(job_id)
                     stage.distances.append(distance)
@@ -147,6 +169,17 @@ def search_jobs(
         for rank, job_id in enumerate(stage.job_ids, start=1):
             scores[job_id] = scores.get(job_id, 0.0) + 1 / (RRF_K + rank)
     fusion = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    ranking = fusion
+    reranked = None
+    if reranker is not None:
+        candidates = [job_id for job_id, _ in fusion[:RERANK_TOP]]
+        rerank_scores = reranker.score(
+            query.search_text, [closest_chunk[job_id][1] for job_id in candidates]
+        )
+        reranked = sorted(
+            zip(candidates, rerank_scores, strict=True), key=lambda item: item[1], reverse=True
+        )
+        ranking = reranked
 
     results = [
         SearchResult(
@@ -159,7 +192,7 @@ def search_jobs(
             url=_text(chunk_metadata[job_id], "url"),
             score=score,
         )
-        for number, (job_id, score) in enumerate(fusion[:top_k], start=1)
+        for number, (job_id, score) in enumerate(ranking[:top_k], start=1)
     ]
     trace = SearchTrace(
         question=question,
@@ -167,6 +200,7 @@ def search_jobs(
         filters=query.filters,
         queries=stages,
         fusion=fusion,
+        reranked=reranked,
     )
     return SearchOutcome(results=results, message=_message(results, query.filters), trace=trace)
 

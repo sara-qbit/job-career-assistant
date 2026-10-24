@@ -6,9 +6,10 @@ service turns into answer events. Expected failures raise AppError subclasses; t
 their user message back to the LLM as the tool result.
 """
 
-from chromadb.api.models.Collection import Collection
-from langchain_core.embeddings import Embeddings
+from collections.abc import Callable
+
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel
 
@@ -17,7 +18,9 @@ from turing_projects_v2.errors import UserInputError
 from turing_projects_v2.judge import Judge
 from turing_projects_v2.profile import CandidateProfile
 from turing_projects_v2.rag import retriever
-from turing_projects_v2.rag.indexer import NOT_STATED
+from turing_projects_v2.rag.indexer import NOT_STATED, KnowledgeBase
+from turing_projects_v2.rag.reranker import Reranker
+from turing_projects_v2.rag.retriever import SearchSettings
 from turing_projects_v2.store import JobStore
 
 
@@ -34,22 +37,34 @@ class JobDescription(BaseModel):
 def job_tools(
     store: JobStore,
     llm: BaseChatModel,
-    collection: Collection,
-    embedder: Embeddings,
+    knowledge_base: Callable[[str], KnowledgeBase],
     judge: Judge,
     profile: CandidateProfile,
+    reranker: Reranker | None = None,
 ) -> list[BaseTool]:
-    """The job tools, bound to the given services."""
+    """The job tools, bound to the given services.
+
+    `search_jobs` searches the Knowledge Base of the embedding model named in the run config's
+    `configurable["search"]` (a SearchSettings dict), reranking if it says so.
+    """
 
     @tool(response_format="content_and_artifact")
-    def search_jobs(question: str) -> tuple[str, dict]:
+    def search_jobs(question: str, config: RunnableConfig) -> tuple[str, dict]:
         """Search the Knowledge Base for Job Postings matching the candidate's request.
 
         Args:
             question: the candidate's request in their own words, including any hard conditions
                 (remote, work type, location, Target Role, experience level).
         """
-        outcome = retriever.search_jobs(question, llm, collection, embedder)
+        search = SearchSettings.model_validate(config.get("configurable", {}).get("search", {}))
+        collection, embedder = knowledge_base(search.embedding_model)
+        outcome = retriever.search_jobs(
+            question,
+            llm,
+            collection,
+            embedder,
+            reranker=reranker if search.rerank else None,
+        )
         lines = [outcome.message]
         lines += [
             f"#{result.number} [job ID {result.job_id}] {result.title} at "
