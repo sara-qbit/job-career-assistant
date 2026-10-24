@@ -17,6 +17,7 @@ from turing_projects_v2.agent.chat import (
     JobDescriptionEvent,
     JobInfoEvent,
     MarketStatsEvent,
+    SecurityEvent,
     StatusEvent,
     TextEvent,
     ToolCallEvent,
@@ -218,6 +219,12 @@ class AnswerView:
             case CoverLetterEvent(letter=letter):
                 self._text_area = None
                 show_cover_letter(letter)
+            case SecurityEvent(event_type="rejected_input", message=message):
+                self._text_area = None
+                st.error(message, icon=":material/block:")
+            case SecurityEvent(message=message):
+                self._text_area = None
+                st.caption(f":material/shield: {escape_markdown(message)}")
             case MarketStatsEvent(stats=stats):
                 self._text_area = None
                 show_market_stats(stats)

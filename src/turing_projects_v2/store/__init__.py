@@ -162,6 +162,15 @@ _COUNT_BY = {
 }
 
 
+class SecurityLogEntry(BaseModel):
+    """One blocked or flagged input, or another security event; never holds personal data."""
+
+    conversation_id: str
+    event_type: str
+    excerpt: str
+    created_at: datetime | None = None
+
+
 class TokenUsage(BaseModel):
     """Tokens used by one LLM call; cost in USD, None when the provider did not report it."""
 
@@ -224,6 +233,11 @@ class JobStore:
                 "id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES postings (job_id), "
                 "target_role TEXT NOT NULL, template_name TEXT NOT NULL, letter TEXT NOT NULL, "
                 "created_at TEXT NOT NULL)"
+            )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS security_log ("
+                "id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, event_type TEXT NOT NULL, "
+                "excerpt TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS token_usage ("
@@ -422,6 +436,20 @@ class JobStore:
         for row in rows:
             result.setdefault(row["label"], []).append(row["normalized_salary"])
         return result
+
+    def log_security_event(self, entry: SecurityLogEntry) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT INTO security_log (conversation_id, event_type, excerpt) VALUES (?, ?, ?)",
+                (entry.conversation_id, entry.event_type, entry.excerpt),
+            )
+
+    def security_log(self) -> list[SecurityLogEntry]:
+        """Every security event, oldest first."""
+        rows = self._db.execute(
+            "SELECT conversation_id, event_type, excerpt, created_at FROM security_log ORDER BY id"
+        ).fetchall()
+        return [SecurityLogEntry.model_validate(dict(row)) for row in rows]
 
     def record_token_usage(self, usage: TokenUsage) -> None:
         with self._db:

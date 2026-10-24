@@ -6,12 +6,12 @@
 
 **Status:** ready-for-agent
 
-- [ ] Input validation: non-empty, at most 2,000 characters, numeric and existing job IDs, clear messages
-- [ ] Prompt-injection defence: posting text in delimited data blocks plus a system-prompt rule; pattern-based flagging of user input
-- [ ] Scope guard politely refuses off-topic requests
-- [ ] Personal data only passed to the LLM in `write_cover_letter` and never logged
-- [ ] Secrets only in the environment file; startup check
-- [ ] Tool-call cap confirmed; security events written to a security log
-- [ ] Seam-3 tests for each measure
+- [x] Input validation: non-empty, at most 2,000 characters, numeric and existing job IDs, clear messages
+- [x] Prompt-injection defence: posting text in delimited data blocks plus a system-prompt rule; pattern-based flagging of user input
+- [x] Scope guard politely refuses off-topic requests
+- [x] Personal data only passed to the LLM in `write_cover_letter` and never logged
+- [x] Secrets only in the environment file; startup check
+- [x] Tool-call cap confirmed; security events written to a security log
+- [x] Seam-3 tests for each measure
 
 **Note from 09:** The full Cover Letter (with the candidate's name, address and phone) is the `write_cover_letter` ToolMessage artifact, so the checkpointer (`data/conversations.sqlite`) stores it locally. The LLM never receives it: the tool reply leaves the letter out. Make sure no log, the Evaluation tab's tool-call view or the security log shows these details.

@@ -20,7 +20,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field
 
-from turing_projects_v2.agent.agent import build_agent
+from turing_projects_v2.agent.agent import TOOL_CALL_CAP_RESULT, build_agent
 from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.config import Settings
 from turing_projects_v2.errors import AppError, ExternalAPIError
@@ -30,7 +30,16 @@ from turing_projects_v2.profile import CandidateProfile, load_profile
 from turing_projects_v2.rag.embeddings import load_embedder
 from turing_projects_v2.rag.indexer import open_collection
 from turing_projects_v2.rag.retriever import SearchOutcome, SearchResult
-from turing_projects_v2.store import CoverLetter, JobInfo, JobStore, TokenUsage
+from turing_projects_v2.security import (
+    EXCERPT_LENGTH,
+    LLMScopeGuard,
+    ScopeGuard,
+    SecurityEventType,
+    input_problem,
+    looks_like_injection,
+    redacted,
+)
+from turing_projects_v2.store import CoverLetter, JobInfo, JobStore, SecurityLogEntry, TokenUsage
 from turing_projects_v2.tools.jobs import JobDescription, job_tools
 from turing_projects_v2.tools.stats import MarketStats, market_stats_tool
 
@@ -41,6 +50,12 @@ TOOL_STATUS = {
     "write_cover_letter": "Writing the Cover Letter and checking it",
     "job_market_stats": "Computing job market statistics",
 }
+
+
+OFF_TOPIC_ANSWER = (
+    "Sorry, I can only help with job search and job applications: finding Job Postings, "
+    "explaining jobs and companies, writing Cover Letters and job market statistics."
+)
 
 
 class TextEvent(BaseModel):
@@ -99,6 +114,14 @@ class MarketStatsEvent(BaseModel):
     stats: MarketStats
 
 
+class SecurityEvent(BaseModel):
+    """A security measure acted on the candidate's message; `message` explains it to them."""
+
+    kind: Literal["security"] = "security"
+    event_type: SecurityEventType
+    message: str
+
+
 class UsageEvent(BaseModel):
     kind: Literal["usage"] = "usage"
     usage: TokenUsage
@@ -121,6 +144,7 @@ type AnswerEvent = Annotated[
     | JobInfoEvent
     | CoverLetterEvent
     | MarketStatsEvent
+    | SecurityEvent
     | UsageEvent
     | ErrorEvent,
     Field(discriminator="kind"),
@@ -153,12 +177,15 @@ class ChatService:
         judge: Judge,
         profile: CandidateProfile,
         *,
+        scope_guard: ScopeGuard,
         checkpointer: BaseCheckpointSaver | None = None,
         history_window: int = 20,
         max_tool_calls: int = 6,
     ) -> None:
         """`checkpointer` stores the Conversations (in memory if None)."""
         self._store = store
+        self._profile = profile
+        self._scope_guard = scope_guard
         self._agent = build_agent(
             llm,
             [
@@ -176,22 +203,59 @@ class ChatService:
         Token usage of every LLM call (also those inside tools) is recorded in the store and
         yielded as a UsageEvent.
         """
+        problem = input_problem(message)
+        if problem is not None:
+            yield self._security_event(conversation_id, "rejected_input", problem, message)
+            return
+        if looks_like_injection(message):
+            yield self._security_event(
+                conversation_id,
+                "prompt_injection",
+                "Your message contains phrases often used to manipulate chatbots. It was flagged "
+                "and logged; the assistant still follows its rules.",
+                message,
+            )
         usage_events: queue.SimpleQueue[UsageEvent] = queue.SimpleQueue()
         recorder = _UsageRecorder(conversation_id, self._store, usage_events)
+        try:
+            in_scope = self._scope_guard.check(message, {"callbacks": [recorder]}).on_topic
+        except AppError as error:
+            yield ErrorEvent(message=error.user_message)
+            return
+        if not in_scope:
+            yield self._security_event(
+                conversation_id, "off_topic", "Off-topic request: refused and logged.", message
+            )
+            yield TextEvent(text=OFF_TOPIC_ANSWER)
+            yield from _drained(usage_events)
+            return
         config = {**_thread(conversation_id), "callbacks": [recorder]}
+        capped = False
         stream = self._agent.stream(
             {"messages": [HumanMessage(message)]}, config, stream_mode=["messages", "updates"]
         )
         try:
             for mode, data in stream:
-                while not usage_events.empty():
-                    yield usage_events.get()
+                yield from _drained(usage_events)
                 if mode == "messages":
                     yield from _text_events(*data)
                 else:
                     for node, update in data.items():
                         for update_message in (update or {}).get("messages", []):
                             yield from _update_events(update_message)
+                            reached_cap = (
+                                isinstance(update_message, ToolMessage)
+                                and update_message.text == TOOL_CALL_CAP_RESULT
+                            )
+                            if reached_cap and not capped:
+                                capped = True
+                                yield self._security_event(
+                                    conversation_id,
+                                    "tool_call_cap",
+                                    "This question needed too many tool calls; the assistant "
+                                    "was stopped to save time and cost.",
+                                    message,
+                                )
                             # Answers not written by the model node (e.g. the tool-call cap's)
                             # are not streamed as chunks.
                             if node != "model" and isinstance(update_message, AIMessage):
@@ -204,8 +268,23 @@ class ChatService:
             yield ErrorEvent(
                 message="I could not finish this request. Please rephrase it or split it up."
             )
-        while not usage_events.empty():
-            yield usage_events.get()
+        yield from _drained(usage_events)
+
+    def _security_event(
+        self,
+        conversation_id: str,
+        event_type: SecurityEventType,
+        explanation: str,
+        message: str,
+    ) -> SecurityEvent:
+        """Log the event with an excerpt of the message, and return it for the candidate."""
+        excerpt = redacted(message, self._profile)[:EXCERPT_LENGTH]
+        self._store.log_security_event(
+            SecurityLogEntry(
+                conversation_id=conversation_id, event_type=event_type, excerpt=excerpt
+            )
+        )
+        return SecurityEvent(event_type=event_type, message=explanation)
 
     def conversation(self, conversation_id: str) -> Conversation:
         """The stored Conversation (empty if unknown): its turns and its latest Search Results.
@@ -231,17 +310,24 @@ class ChatService:
 def open_chat_service(settings: Settings) -> ChatService:
     """The Chat service on the real store, Knowledge Base, Conversations and agent model."""
     embedder = load_embedder(settings.embedding_model)
+    llm = chat_model(settings, settings.agent_model)
     return ChatService(
-        chat_model(settings, settings.agent_model),
+        llm,
         JobStore(settings.database_path),
         open_collection(settings.chroma_dir, settings.embedding_model),
         embedder,
         open_judge(settings),
         load_profile(settings.candidate_dir),
+        scope_guard=LLMScopeGuard(llm),
         checkpointer=open_checkpointer(settings.conversations_path),
         history_window=settings.history_window,
         max_tool_calls=settings.max_tool_calls,
     )
+
+
+def _drained(events: queue.SimpleQueue[UsageEvent]) -> Iterator[UsageEvent]:
+    while not events.empty():
+        yield events.get()
 
 
 def _thread(conversation_id: str) -> dict[str, Any]:

@@ -25,7 +25,7 @@ from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.config import PROJECT_ROOT
 from turing_projects_v2.cover_letter import LetterGaps
 from turing_projects_v2.errors import ExternalAPIError
-from turing_projects_v2.fakes import FakeChatModel, FakeEmbedder, FakeJudge
+from turing_projects_v2.fakes import FakeChatModel, FakeEmbedder, FakeJudge, FakeScopeGuard
 from turing_projects_v2.importer import import_kaggle
 from turing_projects_v2.job_info import JobSummaries
 from turing_projects_v2.judge import Verdict
@@ -71,7 +71,7 @@ def chat(tmp_path, store, responses):
     return chat_with(tmp_path, store, FakeChatModel(responses=responses))
 
 
-def chat_with(tmp_path, store, llm, judge=None, **options):
+def chat_with(tmp_path, store, llm, judge=None, scope_guard=None, **options):
     embedder = FakeEmbedder()
     collection = open_collection(tmp_path / "chroma", "fake")
     index_knowledge_base(store, collection, embedder)
@@ -84,7 +84,16 @@ def chat_with(tmp_path, store, llm, judge=None, **options):
             "phone": "0123 456",
         }
     )
-    return ChatService(llm, store, collection, embedder, judge or FakeJudge(), profile, **options)
+    return ChatService(
+        llm,
+        store,
+        collection,
+        embedder,
+        judge or FakeJudge(),
+        profile,
+        scope_guard=scope_guard or FakeScopeGuard(),
+        **options,
+    )
 
 
 def of_kind(events, kind):

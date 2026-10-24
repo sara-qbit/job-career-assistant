@@ -8,6 +8,7 @@ from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
@@ -57,15 +58,18 @@ def chat_model(settings: Settings, model: str) -> BaseChatModel:
 
 
 def ask_structured[T: BaseModel](
-    llm: BaseChatModel, schema: type[T], messages: Sequence[BaseMessage]
+    llm: BaseChatModel,
+    schema: type[T],
+    messages: Sequence[BaseMessage],
+    config: RunnableConfig | None = None,
 ) -> T:
-    """The LLM's answer to `messages` as a `schema` object.
+    """The LLM's answer to `messages` as a `schema` object (`config` e.g. adds callbacks).
 
     API failures (after the client's own retries) raise ExternalAPIError; an answer that does
     not fit the schema raises DataValidationError.
     """
     try:
-        answer = llm.with_structured_output(schema).invoke(list(messages))
+        answer = llm.with_structured_output(schema).invoke(list(messages), config)
     except openai.APIError as error:
         raise ExternalAPIError(f"{schema.__name__} request failed: {error}") from error
     except (OutputParserException, PydanticValidationError) as error:

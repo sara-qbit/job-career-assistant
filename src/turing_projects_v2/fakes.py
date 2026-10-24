@@ -15,6 +15,7 @@ from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import BaseModel, PrivateAttr
 
 from turing_projects_v2.judge import Verdict
+from turing_projects_v2.security import ScopeVerdict
 
 
 class FakeChatModel(BaseChatModel):
@@ -82,6 +83,20 @@ class FakeEmbedder(Embeddings):
     def embed_query(self, text: str) -> list[float]:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         return [digest[i % len(digest)] / 255 for i in range(self.dimensions)]
+
+
+class FakeScopeGuard:
+    """Scope guard that returns scripted verdicts in order, then "on topic" once they run out."""
+
+    def __init__(self, verdicts: Iterable[ScopeVerdict] = ()) -> None:
+        self._verdicts = list(verdicts)
+        self.checked: list[str] = []
+
+    def check(self, message: str, config: Any = None) -> ScopeVerdict:
+        self.checked.append(message)
+        if self._verdicts:
+            return self._verdicts.pop(0)
+        return ScopeVerdict(on_topic=True, reason="fake scope guard default")
 
 
 class FakeJudge:
