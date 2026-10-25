@@ -346,3 +346,37 @@ def test_summaries_not_stated_get_the_templates_own_wording(tmp_path):
 
     assert "support committees in the duties of this role.\n" in letter.text
     assert "extend my experience to your field.\n" in letter.text
+
+
+DIN_TEMPLATE = """\
+{{candidate_name}}
+{{candidate_postal_code}} {{candidate_city}}
+{{candidate_email}}
+
+{{company_name}}
+
+{{candidate_city}}, {{date}}
+
+Application for the position of {{job_name}}
+
+Dear Hiring Manager,
+I apply for {{job_name}} at {{company_name}}. I support achieving the {{company_vision}}
+I am highly motivated to {{role_summary}}
+Yours sincerely,
+{{candidate_name}}
+"""
+
+
+def test_the_letter_gets_the_senders_email_and_todays_place_and_date(tmp_path):
+    store = letter_store(tmp_path)
+
+    letter = write_cover_letter(
+        1, store, profile(template=DIN_TEMPLATE), FakeChatModel(responses=[GAPS]), FakeJudge()
+    )
+
+    today = datetime.now().astimezone()
+    lines = letter.text.splitlines()
+    assert lines[:3] == ["Ada Example", "12345 Sample Town", "ada@example.com"]
+    assert f"Sample Town, {today.day} {today.strftime('%B %Y')}" in lines
+    assert "Application for the position of AI Engineer" in lines
+    assert all(check.passed for check in letter.checks)

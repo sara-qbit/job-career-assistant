@@ -33,13 +33,16 @@ PROFILE_GAPS = frozenset(
         "candidate_city",
         "candidate_country",
         "candidate_phone",
+        "candidate_email",
         "github",
     }
 )
 JOB_GAPS = frozenset(
     {"company_name", "company_address", "job_name", "work_type", "company_vision", "role_summary"}
 )
-KNOWN_GAPS = PROFILE_GAPS | JOB_GAPS
+LETTER_GAPS = frozenset({"date"})
+"""Filled when the letter is written: the day, e.g. "25 October 2026"."""
+KNOWN_GAPS = PROFILE_GAPS | JOB_GAPS | LETTER_GAPS
 
 
 class LetterTemplate(BaseModel):

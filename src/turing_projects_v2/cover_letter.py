@@ -78,6 +78,8 @@ def write_cover_letter(
         rewrite = _written_gaps(template.text, info, wording, llm, fabricated, gaps)
         gaps = gaps.model_copy(update={gap: getattr(rewrite, gap) for gap in fabricated})
         verdicts |= {gap: _judged(judge, gap, gaps, info, sources) for gap in fabricated}
+    written_at = datetime.now(UTC)
+    local_date = written_at.astimezone()
     values = {
         "candidate_name": profile.name,
         "candidate_street": profile.street,
@@ -85,6 +87,9 @@ def write_cover_letter(
         "candidate_city": profile.city,
         "candidate_country": profile.country,
         "candidate_phone": profile.phone,
+        "candidate_email": profile.email,
+        # The day the letter is written, e.g. "25 October 2026" (the letters are in English).
+        "date": f"{local_date.day} {local_date:%B %Y}",
         "github": profile.github,
         "company_name": info.company_name,
         "company_address": _address(company),
@@ -103,7 +108,7 @@ def write_cover_letter(
         company_vision_verdict=verdicts["company_vision"],
         role_summary_verdict=verdicts["role_summary"],
         rewritten=bool(fabricated),
-        created_at=datetime.now(UTC),
+        created_at=written_at,
     )
     store.save_cover_letter(letter)
     return letter

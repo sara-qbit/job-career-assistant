@@ -1,12 +1,16 @@
 {{candidate_name}}
 {{candidate_street}}
-{{candidate_city}}, {{candidate_postal_code}}
+{{candidate_postal_code}} {{candidate_city}}
 {{candidate_country}}
 Tel.: {{candidate_phone}}
-
+{{candidate_email}}
 
 {{company_name}}
 {{company_address}}
+
+{{candidate_city}}, {{date}}
+
+Application for the position of {{job_name}}
 
 Dear Mr/Ms Hiring Manager,
 I am writing to apply for the {{work_type}} position of {{job_name}} at {{company_name}}. I am highly motivated to take on a responsible and dedicated role and to support top management committees in {{role_summary}}

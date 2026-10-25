@@ -34,13 +34,18 @@ def write_candidate_dir(tmp_path: Path, profile: str, templates: dict[str, str])
     return tmp_path
 
 
-def test_candidate_profile_holds_the_candidates_details():
-    profile = load_profile(CANDIDATE_DIR)
+def test_candidate_profile_holds_the_candidates_details(tmp_path):
+    # Its own profile file: the real one in candidate/ may hold the candidate's private details.
+    templates = {
+        name: (CANDIDATE_DIR / "templates" / f"{name}.txt").read_text(encoding="utf-8")
+        for name in ("ai", "grant")
+    }
+    profile = load_profile(write_candidate_dir(tmp_path, PROFILE_TOML, templates))
 
     assert profile.name == "Ada Example"
     assert profile.email == "ada@example.com"
-    assert profile.github == "https://github.com/sara-qbit"
-    assert profile.phone == "0123 4567890"
+    assert profile.github == "https://github.com/ada"
+    assert profile.phone == "0123 456"
 
 
 def test_ai_roles_use_the_ai_letter_template():
@@ -62,7 +67,9 @@ def test_ai_letter_template_marks_its_gaps():
         "candidate_city",
         "candidate_country",
         "candidate_phone",
+        "candidate_email",
         "github",
+        "date",
         "company_name",
         "company_address",
         "job_name",
