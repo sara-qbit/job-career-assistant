@@ -355,6 +355,11 @@ class ChatService:
         """Every Conversation, most recently used first."""
         return self._store.conversations()
 
+    @property
+    def store(self) -> JobStore:
+        """The data store, e.g. for the evaluation results the Evaluation tab shows."""
+        return self._store
+
     def security_log(self) -> list[SecurityLogEntry]:
         """Every security event of every Conversation, oldest first."""
         return self._store.security_log()

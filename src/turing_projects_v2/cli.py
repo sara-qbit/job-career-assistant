@@ -3,21 +3,31 @@
 import argparse
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
+from functools import cache
 
 from tqdm import tqdm
 
 from turing_projects_v2.config import PROJECT_ROOT, Settings, load_settings
-from turing_projects_v2.errors import AppError
+from turing_projects_v2.errors import AppError, UserInputError
 from turing_projects_v2.importer import import_kaggle
 from turing_projects_v2.llm import chat_model
 from turing_projects_v2.profile import load_profile
 from turing_projects_v2.rag.embeddings import EMBEDDING_MODELS, load_embedder
-from turing_projects_v2.rag.indexer import NOT_STATED, index_knowledge_base, open_collection
+from turing_projects_v2.rag.indexer import (
+    NOT_STATED,
+    KnowledgeBase,
+    index_knowledge_base,
+    open_collection,
+)
+from turing_projects_v2.rag.reranker import CrossEncoderReranker
 from turing_projects_v2.rag.retriever import search_jobs
 from turing_projects_v2.store import JobStore
 from turing_projects_v2.tagging import load_title_variants, tag_postings
+from turing_projects_v2.tools.jobs import job_tools
+from turing_projects_v2.tools.stats import market_stats_tool
 
 
 def check(settings: Settings) -> None:
@@ -101,6 +111,61 @@ def search(settings: Settings, question: str, embedding_model: str | None) -> No
         )
 
 
+def evaluate(settings: Settings, step: str, workers: int) -> None:
+    """run an evaluation step: generate (test-set questions), agent, fields or rag"""
+    # Imported here: RAGAs and the evaluation code load slowly and only this command needs them.
+    from turing_projects_v2.evaluation import live
+    from turing_projects_v2.evaluation.agent import load_agent_cases, run_agent_evaluation
+    from turing_projects_v2.evaluation.fields import run_field_evaluation
+    from turing_projects_v2.evaluation.rag import RagConfig, run_rag_evaluation
+
+    store = JobStore(settings.database_path)
+    if step == "generate":
+        questions = live.generate_test_questions(
+            store, chat_model(settings, settings.judge_model), load_embedder(settings, "gemini")
+        )
+        print(f"Saved {len(questions)} test-set questions; approve them on the Evaluation tab.")
+        return
+    if step == "fields":
+        run = run_field_evaluation(store)
+    elif step == "agent":
+        llm = chat_model(settings, settings.agent_model)
+        tools = [
+            *job_tools(store, llm, lambda name: None, None, None),  # type: ignore[arg-type]
+            market_stats_tool(store),
+        ]
+        judge = live.RagasToolJudge(live.ragas_llm(settings, settings.judge_model))
+        run = run_agent_evaluation(store, load_agent_cases(), llm, tools, judge)
+    else:
+        questions = store.approved_test_questions()
+        if not questions:
+            raise UserInputError("No approved test-set questions; approve some first.")
+        llm = chat_model(settings, settings.agent_model)
+        configs = [
+            RagConfig(embedding_model=model, rerank=rerank)
+            for model in EMBEDDING_MODELS
+            for rerank in (True, False)
+        ]
+        print(f"{len(questions)} questions x {len(configs)} configurations, {workers} at a time")
+        with tqdm(total=len(questions) * len(configs), unit="question") as bar:
+            runs = run_rag_evaluation(
+                store,
+                configs,
+                live.search_retriever(llm, _knowledge_bases(settings), CrossEncoderReranker()),
+                live.answer_writer(llm),
+                live.RagasScorer(
+                    lambda: live.ragas_llm(settings, settings.judge_model, for_metrics=True),
+                    on_error=tqdm.write,
+                ),
+                on_progress=lambda message: bar.update(1),
+                workers=workers,
+            )
+        for run in runs:
+            print(run.config, {name: _rounded(value) for name, value in run.metrics.items()})
+        return
+    print(run.kind, {name: _rounded(value) for name, value in run.metrics.items()})
+
+
 def chat(settings: Settings) -> None:
     """open the chatbot in the browser (Streamlit)"""
     app = PROJECT_ROOT / "src" / "turing_projects_v2" / "ui" / "app.py"
@@ -115,6 +180,7 @@ COMMANDS: dict[str, Callable[..., None]] = {
     "review-titles": review_titles,
     "index": index,
     "search": search,
+    "evaluate": evaluate,
     "chat": chat,
 }
 
@@ -133,12 +199,37 @@ def main() -> None:
         choices=EMBEDDING_MODELS,
         help="embedding model; default from settings",
     )
+    parsers["evaluate"].add_argument("step", choices=["generate", "agent", "fields", "rag"])
+    parsers["evaluate"].add_argument(
+        "--workers", type=int, default=4, help="questions evaluated at a time (rag)"
+    )
     options = vars(parser.parse_args())
     name = options.pop("command") or "check"
     try:
         COMMANDS[name](load_settings(), **options)
     except AppError as error:
         sys.exit(f"{name} failed: {error}")
+
+
+def _knowledge_bases(settings: Settings) -> Callable[[str], KnowledgeBase]:
+    """Opens each Knowledge Base once; the lock is needed because questions are evaluated on
+    several threads, and ChromaDB fails when two threads create a client at the same time."""
+    lock = threading.Lock()
+
+    @cache
+    def open_once(name: str) -> KnowledgeBase:
+        embedder = load_embedder(settings, name)
+        return KnowledgeBase(open_collection(settings.chroma_dir, name), embedder)
+
+    def knowledge_base(name: str) -> KnowledgeBase:
+        with lock:
+            return open_once(name)
+
+    return knowledge_base
+
+
+def _rounded(value: float | None) -> float | None:
+    return None if value is None else round(value, 3)
 
 
 def _tag(settings: Settings, store: JobStore) -> None:

@@ -78,6 +78,26 @@ class SearchSettings(BaseModel):
     rerank: bool = True
 
 
+class QueryTranslation(BaseModel):
+    """The LLM's part of a search: the question as search text plus filters, and its variants."""
+
+    query: SearchQuery
+    variants: QueryVariants
+
+
+def translate_query(question: str, llm: BaseChatModel) -> QueryTranslation:
+    """Self-query and multi-query: the two LLM steps that turn `question` into searches."""
+    query = ask_structured(
+        llm, SearchQuery, [SystemMessage(load_prompt("self_query")), HumanMessage(question)]
+    )
+    variants = ask_structured(
+        llm,
+        QueryVariants,
+        [SystemMessage(load_prompt("multi_query")), HumanMessage(query.search_text)],
+    )
+    return QueryTranslation(query=query, variants=variants)
+
+
 class SearchResult(BaseModel):
     number: int
     job_id: int
@@ -131,6 +151,7 @@ def search_jobs(
     top_k: int = 5,
     per_query: int = 20,
     reranker: Reranker | None = None,
+    translation: QueryTranslation | None = None,
 ) -> SearchOutcome:
     """The `top_k` Job Postings that best match `question`, numbered from 1.
 
@@ -148,14 +169,8 @@ def search_jobs(
                 question=question, search_text="", filters=SearchFilters(), queries=[], fusion=[]
             ),
         )
-    query = ask_structured(
-        llm, SearchQuery, [SystemMessage(load_prompt("self_query")), HumanMessage(question)]
-    )
-    variants = ask_structured(
-        llm,
-        QueryVariants,
-        [SystemMessage(load_prompt("multi_query")), HumanMessage(query.search_text)],
-    )
+    translation = translation or translate_query(question, llm)
+    query, variants = translation.query, translation.variants
     where = _where(query.filters, collection)
 
     stages: list[QueryStage] = []

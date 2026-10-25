@@ -17,6 +17,7 @@ from tests.test_chat import (
 from turing_projects_v2.agent import chat as chat_module
 from turing_projects_v2.agent.chat import CitationsEvent
 from turing_projects_v2.fakes import FakeChatModel, FakeReranker
+from turing_projects_v2.store import EvalQuestion, EvaluationRun
 
 APP = Path(__file__).parents[1] / "src" / "turing_projects_v2" / "ui" / "app.py"
 
@@ -158,6 +159,8 @@ EVALUATION_SECTIONS = [
     "Tool calls",
     "Security",
     "System prompts",
+    "RAGAs test set",
+    "Evaluation results",
 ]
 
 
@@ -185,3 +188,52 @@ def test_evaluation_page_of_a_new_conversation_explains_that_it_is_empty():
     assert not app.exception
     assert [header.value for header in app.subheader] == EVALUATION_SECTIONS
     assert any("No questions in this Conversation yet" in info.value for info in app.info)
+
+
+def evaluated_service(tmp_path):
+    service = chat(tmp_path, chat_store(tmp_path), [])
+    service.store.save_test_questions(
+        [
+            EvalQuestion(question=f"question {n}", reference=f"answer {n}", reference_contexts=[])
+            for n in (1, 2)
+        ]
+    )
+    for kind, config, metrics in [
+        ("rag", {"embedding_model": "gemini", "rerank": True}, {"faithfulness": 0.9}),
+        ("rag", {"embedding_model": "gemini", "rerank": False}, {"faithfulness": 0.7}),
+        ("agent", {"cases": 10}, {"tool_selection_accuracy": 1.0}),
+        ("fields", {"letters": 6}, {"job name": 1.0}),
+    ]:
+        service.store.save_evaluation_run(
+            EvaluationRun(kind=kind, config=config, metrics=metrics, cases=[])
+        )
+    return service
+
+
+def test_evaluation_results_are_shown_with_charts(tmp_path, monkeypatch):
+    service = evaluated_service(tmp_path)
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+
+    app.switch_page("app_pages/evaluation.py").run()
+
+    assert not app.exception
+    assert [header.value for header in app.subheader][-2:] == EVALUATION_SECTIONS[-2:]
+    assert len(app.get("vega_lite_chart")) >= 1
+    text = " ".join(element.value for element in app.markdown)
+    assert "Tool Selection Accuracy" in text
+
+
+def test_ticking_a_test_question_approves_it(tmp_path, monkeypatch):
+    service = evaluated_service(tmp_path)
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app.switch_page("app_pages/evaluation.py").run()
+    _first, second = service.store.test_questions()
+
+    app.checkbox(key=f"approve-{second.id}").check().run()
+
+    assert not app.exception
+    assert [q.question for q in service.store.approved_test_questions()] == ["question 2"]
+    app.checkbox(key=f"approve-{second.id}").uncheck().run()
+    assert service.store.approved_test_questions() == []

@@ -103,6 +103,24 @@ class FakeReranker:
         ]
 
 
+class FakeToolJudge:
+    """Judges a tool call "reasonable" if `verdicts` says so for its tool, else "unreasonable".
+
+    Records every (tool name, question) it judges in `judged`.
+    """
+
+    def __init__(self, verdicts: dict[str, str] | None = None) -> None:
+        self.verdicts = verdicts or {}
+        self.judged: list[tuple[str, str]] = []
+
+    def judge(self, case: Any, call: Any) -> Any:
+        from turing_projects_v2.evaluation.accuracy import ToolVerdict
+
+        self.judged.append((call.name, case.question))
+        value = self.verdicts.get(call.name, "unreasonable")
+        return ToolVerdict(value=value, reason=f"fake tool judge: {value}")
+
+
 class FakeScopeGuard:
     """Scope guard that returns scripted verdicts in order, then "on topic" once they run out."""
 

@@ -76,7 +76,7 @@ def index_knowledge_base(
         batch = new_postings[start : start + batch_size]
         ids, documents, metadatas = [], [], []
         for posting in batch:
-            chunks = _chunks(posting)
+            chunks = chunk_texts(posting)
             ids += [f"{posting.job_id}-{n}" for n in range(len(chunks))]
             documents += chunks
             metadatas += [_metadata(posting)] * len(chunks)
@@ -106,7 +106,7 @@ def _indexed_metadata(collection: Collection) -> dict[int, dict[str, Metadata]]:
     return chunks
 
 
-def _chunks(posting: JobPosting) -> list[str]:
+def chunk_texts(posting: JobPosting) -> list[str]:
     """The Job Description split into pieces, each prefixed with the context header.
 
     A posting without a description still gets one chunk (the header alone), so that it can be

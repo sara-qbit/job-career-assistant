@@ -13,6 +13,15 @@ from turing_projects_v2.agent.chat import ChatService, SearchSettings
 from turing_projects_v2.config import load_settings
 from turing_projects_v2.errors import AppError
 
+EMBEDDING_MODEL_LABELS = {
+    "gemini": "Gemini Embedding 2",
+    "qwen3": "Qwen3-Embedding-8B",
+    "minilm": "MiniLM (local)",
+}
+
+EMBEDDING_MODEL_SHORT_NAMES = {"gemini": "Gemini", "qwen3": "Qwen3", "minilm": "MiniLM"}
+"""For chart axes, which cut longer labels off."""
+
 
 @st.cache_resource(show_spinner="Loading the Knowledge Base …")
 def chat_service() -> ChatService:

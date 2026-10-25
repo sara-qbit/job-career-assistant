@@ -3,10 +3,12 @@
 Callers use domain operations only; the SQL stays inside this module.
 """
 
+import json
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -171,6 +173,31 @@ class ConversationSummary(BaseModel):
     updated_at: datetime
 
 
+class EvalQuestion(BaseModel):
+    """A RAGAs test-set question with its reference answer and the postings text it came from.
+
+    `approved` is None until the candidate decides; only approved questions are evaluated.
+    """
+
+    id: int | None = None
+    question: str
+    reference: str
+    reference_contexts: list[str]
+    approved: bool | None = None
+
+
+class EvaluationRun(BaseModel):
+    """One evaluation run: what was measured (`kind`), with which configuration, the metric
+    values, and the per-case results."""
+
+    id: int | None = None
+    created_at: datetime | None = None
+    kind: str
+    config: dict[str, Any]
+    metrics: dict[str, float | None]
+    cases: list[dict[str, Any]]
+
+
 class SecurityLogEntry(BaseModel):
     """One blocked or flagged input, or another security event; never holds personal data."""
 
@@ -286,6 +313,17 @@ class JobStore:
                 "CREATE TABLE IF NOT EXISTS conversations ("
                 "id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, "
                 "updated_at TEXT NOT NULL)"
+            )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS eval_questions ("
+                "id INTEGER PRIMARY KEY, question TEXT NOT NULL, reference TEXT NOT NULL, "
+                "reference_contexts TEXT NOT NULL, approved INTEGER)"
+            )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS eval_runs ("
+                "id INTEGER PRIMARY KEY, kind TEXT NOT NULL, config TEXT NOT NULL, "
+                "metrics TEXT NOT NULL, cases TEXT NOT NULL, "
+                "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS token_usage ("
@@ -442,6 +480,11 @@ class JobStore:
         ).fetchall()
         return [CoverLetter.model_validate_json(row["letter"]) for row in rows]
 
+    def all_cover_letters(self) -> list[CoverLetter]:
+        """Every saved Cover Letter, oldest first."""
+        rows = self._db.execute("SELECT letter FROM cover_letters ORDER BY id").fetchall()
+        return [CoverLetter.model_validate_json(row["letter"]) for row in rows]
+
     def posting_counts(
         self,
         by: str,
@@ -506,6 +549,68 @@ class JobStore:
             "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
         ).fetchall()
         return [ConversationSummary.model_validate(dict(row)) for row in rows]
+
+    def save_test_questions(self, questions: Iterable[EvalQuestion]) -> None:
+        """Add generated test-set questions, undecided."""
+        with self._db:
+            self._db.executemany(
+                "INSERT INTO eval_questions (question, reference, reference_contexts) "
+                "VALUES (?, ?, ?)",
+                [(q.question, q.reference, json.dumps(q.reference_contexts)) for q in questions],
+            )
+
+    def test_questions(self) -> list[EvalQuestion]:
+        """Every test-set question, approved or not, in the order generated."""
+        return self._eval_questions("")
+
+    def approved_test_questions(self) -> list[EvalQuestion]:
+        return self._eval_questions("WHERE approved = 1")
+
+    def set_test_approval(self, question_id: int, approved: bool) -> None:
+        with self._db:
+            self._db.execute(
+                "UPDATE eval_questions SET approved = ? WHERE id = ?", (approved, question_id)
+            )
+
+    def _eval_questions(self, where: str) -> list[EvalQuestion]:
+        rows = self._db.execute(
+            "SELECT id, question, reference, reference_contexts, approved "
+            f"FROM eval_questions {where} ORDER BY id"
+        ).fetchall()
+        return [
+            EvalQuestion(
+                id=row["id"],
+                question=row["question"],
+                reference=row["reference"],
+                reference_contexts=json.loads(row["reference_contexts"]),
+                approved=None if row["approved"] is None else bool(row["approved"]),
+            )
+            for row in rows
+        ]
+
+    def save_evaluation_run(self, run: EvaluationRun) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT INTO eval_runs (kind, config, metrics, cases) VALUES (?, ?, ?, ?)",
+                (run.kind, json.dumps(run.config), json.dumps(run.metrics), json.dumps(run.cases)),
+            )
+
+    def evaluation_runs(self) -> list[EvaluationRun]:
+        """Every evaluation run, oldest first."""
+        rows = self._db.execute(
+            "SELECT id, created_at, kind, config, metrics, cases FROM eval_runs ORDER BY id"
+        ).fetchall()
+        return [
+            EvaluationRun(
+                id=row["id"],
+                created_at=row["created_at"],
+                kind=row["kind"],
+                config=json.loads(row["config"]),
+                metrics=json.loads(row["metrics"]),
+                cases=json.loads(row["cases"]),
+            )
+            for row in rows
+        ]
 
     def log_security_event(self, entry: SecurityLogEntry) -> None:
         with self._db:

@@ -1,0 +1,53 @@
+# Hand-written agent cases: a candidate's request and the first tool call a correct agent makes.
+# Tool Selection Accuracy compares the tool name; Parameter Accuracy the expected arguments
+# (strings ignoring case and spacing). Job IDs are real tagged postings.
+
+[[case]]
+question = "remote AI engineer jobs in Texas"
+expected_tool = "search_jobs"
+expected_args = { question = "remote AI engineer jobs in Texas" }
+
+[[case]]
+question = "Find full-time quantum computing jobs"
+expected_tool = "search_jobs"
+expected_args = { question = "Find full-time quantum computing jobs" }
+
+[[case]]
+question = "Are there grant writing or fundraising roles in New York?"
+expected_tool = "search_jobs"
+expected_args = { question = "Are there grant writing or fundraising roles in New York?" }
+
+[[case]]
+question = "Show me the full job description of job 3800272386"
+expected_tool = "get_job_description"
+expected_args = { job_id = 3800272386 }
+
+[[case]]
+question = "What exactly does posting 3886842163 say?"
+expected_tool = "get_job_description"
+expected_args = { job_id = 3886842163 }
+
+[[case]]
+question = "Summarise the role and the company vision of job 3886891821"
+expected_tool = "create_job_info"
+expected_args = { job_id = 3886891821 }
+
+[[case]]
+question = "Write a cover letter for job 2934066464"
+expected_tool = "write_cover_letter"
+expected_args = { job_id = 2934066464 }
+
+[[case]]
+question = "How many postings are there per target role?"
+expected_tool = "job_market_stats"
+expected_args = { statistic = "postings_by_target_role" }
+
+[[case]]
+question = "What salaries do AI Engineer jobs pay?"
+expected_tool = "job_market_stats"
+expected_args = { statistic = "salary_by_target_role", target_role = "AI Engineer" }
+
+[[case]]
+question = "How many quantum software developer jobs are remote?"
+expected_tool = "job_market_stats"
+expected_args = { statistic = "postings_by_remote", target_role = "Quantum Software Developer" }

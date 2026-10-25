@@ -14,15 +14,13 @@ import streamlit as st
 
 from turing_projects_v2.config import Settings, load_settings
 from turing_projects_v2.errors import AppError
-from turing_projects_v2.ui.session import chat_service, open_conversation
+from turing_projects_v2.ui.session import (
+    EMBEDDING_MODEL_LABELS,
+    chat_service,
+    open_conversation,
+)
 
 PAGES = Path(__file__).parent / "app_pages"
-
-EMBEDDING_MODEL_LABELS = {
-    "gemini": "Gemini Embedding 2",
-    "qwen3": "Qwen3-Embedding-8B",
-    "minilm": "MiniLM (local)",
-}
 
 
 def search_choices(settings: Settings) -> None:

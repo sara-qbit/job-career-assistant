@@ -14,6 +14,7 @@ from turing_projects_v2.rag.retriever import (
     SearchFilters,
     SearchQuery,
     search_jobs,
+    translate_query,
 )
 from turing_projects_v2.store import JobStore
 
@@ -340,3 +341,22 @@ def test_trace_keeps_the_matched_chunk_of_each_result(tmp_path, embedder):
     assert python_job.text.startswith("Title: Python Engineer\n")
     assert "Python and more Python." in python_job.text
     assert python_job.distance >= 0
+
+
+def test_search_with_a_given_query_translation_asks_the_llm_nothing(tmp_path, embedder):
+    collection = python_and_grants_jobs(tmp_path, embedder)
+    llm = scripted_llm("python", ["python", "python developer", "python engineer"])
+    translation = translate_query("python jobs", llm)
+
+    outcome = search_jobs(
+        "python jobs", FakeChatModel(responses=[]), collection, embedder, translation=translation
+    )
+
+    assert outcome.trace.search_text == "python"
+    assert [stage.query for stage in outcome.trace.queries] == [
+        "python",
+        "python",
+        "python developer",
+        "python engineer",
+    ]
+    assert {result.job_id for result in outcome.results} == {1, 2}
