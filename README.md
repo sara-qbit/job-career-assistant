@@ -44,10 +44,12 @@ uv sync
 1. Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY`. `.env` is git-ignored; the app
    refuses to start without the key. Optional settings (agent and judge model, default
    embedding model, tool-call cap, history window) are listed in `.env.example`.
-2. Copy `candidate/profile.example.toml` to `candidate/profile.toml` and fill in your own
-   details. The Candidate Profile is the only source of facts about the candidate; its
-   `[target_roles]` table maps each Target Role to a Letter Template in
-   `candidate/templates/<name>.txt` (gaps marked as `{{gap_name}}`).
+2. Put your own details in `candidate/profile.toml` (it ships with made-up example details), or
+   keep your real profile outside the repo and set `CANDIDATE_DIR` in `.env` to that folder
+   (it needs `profile.toml` and `templates/`), so personal details never reach git. The
+   Candidate Profile is the only source of facts about the candidate; its `[target_roles]` table
+   maps each Target Role to a Letter Template in `candidate/templates/<name>.txt` (gaps marked as
+   `{{gap_name}}`).
 3. `candidate/title_variants.toml` lists, per Target Role, the job-title phrases to include and
    exclude.
 
