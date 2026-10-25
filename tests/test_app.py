@@ -35,7 +35,7 @@ def test_app_starts_and_shows_the_chat_page():
     app = AppTest.from_file(str(APP), default_timeout=30).run()
 
     assert not app.exception
-    assert app.title[0].value == "Job Letter Assistant"
+    assert app.title[0].value == "Job Career Assistant"
     assert len(app.chat_input) == 1
 
 

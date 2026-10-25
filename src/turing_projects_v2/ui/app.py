@@ -74,7 +74,7 @@ def conversation_list() -> None:
             )
 
 
-st.set_page_config(page_title="Job Letter Assistant", page_icon="💼")
+st.set_page_config(page_title="Job Career Assistant", page_icon="💼")
 try:
     settings = load_settings()
 except AppError as error:

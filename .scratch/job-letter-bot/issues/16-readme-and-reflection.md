@@ -4,11 +4,11 @@
 
 **Blocked by:** 15
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] What it does, install, configure, import / index, run, test
-- [ ] Architecture: RAG pipeline, tools, agent loop, memory, checks, security
-- [ ] Kaggle CC BY-SA 4.0 credit; statement that v1 uses Kaggle and v2 will use the Bundesagentur Jobsuche API
-- [ ] Evaluation results summary
-- [ ] Reflection: known problems (US-only 2023–24 data, few quantum jobs, judge bias, etc.) and improvement ideas
-- [ ] Version history v0.0 to v1.0
+- [x] What it does, install, configure, import / index, run, test
+- [x] Architecture: RAG pipeline, tools, agent loop, memory, checks, security
+- [x] Kaggle CC BY-SA 4.0 credit; statement that v1 uses Kaggle and v2 will use the Bundesagentur Jobsuche API
+- [x] Evaluation results summary
+- [x] Reflection: known problems (US-only 2023–24 data, few quantum jobs, judge bias, etc.) and improvement ideas
+- [x] Version history v0.0 to v1.0

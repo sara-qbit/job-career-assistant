@@ -7,7 +7,7 @@ from turing_projects_v2.errors import AppError
 from turing_projects_v2.ui.answer import AnswerView
 from turing_projects_v2.ui.session import chat_service, search_settings
 
-st.title("Job Letter Assistant")
+st.title("Job Career Assistant")
 st.caption("Describe the jobs you are looking for in your own words.")
 state = st.session_state
 

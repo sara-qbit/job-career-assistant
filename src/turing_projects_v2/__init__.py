@@ -1,1 +1,1 @@
-"""Job Letter Assistant: finds matching Job Postings and writes Cover Letters."""
+"""Job Career Assistant: finds matching Job Postings, explains them and writes Cover Letters."""
