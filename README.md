@@ -5,6 +5,8 @@ chosen job, and writes a personalised cover letter for it, without inventing fac
 the employer. Built for the Turing College Sprint 2 project (LangChain, advanced RAG, tool
 calling, Streamlit).
 
+The app has two pages: **MAIN**, the chat, and **Evaluation**, everything behind the answers.
+
 > **Status: v1.0, complete.** Search, Job Info, Cover Letters, job market statistics, memory,
 > security measures, an Evaluation tab and a measured RAGAs evaluation.
 
@@ -70,6 +72,7 @@ uv run turing-projects-v2 tag                # re-tag after editing title_varian
 uv run turing-projects-v2 review-titles      # list the titles tagged per Target Role
 uv run turing-projects-v2 index              # embed tagged postings with all 3 models (~15-40 min, ~$0.35 once)
 uv run turing-projects-v2 search "remote AI engineer jobs"   # search the way the chatbot does
+                                                              # (--model minilm|gemini|qwen3)
 uv run turing-projects-v2 chat               # open the chatbot in the browser
 ```
 
@@ -85,6 +88,7 @@ uv run turing-projects-v2 evaluate generate  # RAGAs test-set questions from tag
 uv run turing-projects-v2 evaluate agent     # 10 hand-written tool-calling cases (~1 min, cents)
 uv run turing-projects-v2 evaluate fields    # field accuracy over saved Cover Letters (free)
 uv run turing-projects-v2 evaluate rag       # 6 configurations x approved questions (~15 min, ~$0.70)
+                                             # (--workers N: questions at a time, default 4; I used 8)
 ```
 
 Generated questions are approved or rejected on the Evaluation tab before `evaluate rag`.
@@ -165,6 +169,8 @@ from log excerpts. Every event is in the security log on the Evaluation tab.
 | Path | Purpose |
 | --- | --- |
 | `src/turing_projects_v2/cli.py` | Command-line commands |
+| `src/turing_projects_v2/llm.py` | OpenRouter chat models through LangChain (keeps the reported cost) |
+| `src/turing_projects_v2/profile.py` | Candidate Profile and Letter Templates |
 | `src/turing_projects_v2/config.py`, `errors.py` | Typed settings from `.env`; error types with safe user messages |
 | `src/turing_projects_v2/importer.py`, `tagging.py` | Kaggle CSV import; Target Role tagging from title variants |
 | `src/turing_projects_v2/store/` | SQLite data store (postings, Job Info, letters, Conversations, logs, evaluation) |
@@ -200,8 +206,8 @@ Faithfulness is measured on short answers written from the retrieved chunks only
 
 Two earlier runs, before the configurations shared the rewritten queries, differed from each
 other by up to 0.1-0.2 per value, so smaller differences are noise. What the evidence supports:
-the reranker raised context precision and recall for every model (clearly for MiniLM and Gemini),
-answers stay faithful to the postings (0.87-0.99), and recall is low for every configuration.
+the reranker clearly raised context precision and recall for MiniLM and Gemini, with no clear
+effect for Qwen3 (it lowered Qwen3's precision in both earlier runs); answers stay faithful to the postings (0.87-0.99), and recall is low for every configuration.
 MiniLM + reranker scored highest in this run, but no model is a clear winner.
 
 **Agent** (10 hand-written cases, first tool call only): Tool Selection Accuracy 100%, Parameter

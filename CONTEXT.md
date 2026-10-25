@@ -1,4 +1,4 @@
-# Job Letter Assistant
+# Job Career Assistant
 
 A chatbot that finds job postings matching the candidate's target domain and writes a personalised cover letter for a chosen job, without inventing facts about the candidate.
 
