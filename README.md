@@ -212,6 +212,27 @@ the reranker clearly raised context precision and recall for MiniLM and Gemini, 
 effect for Qwen3 (it lowered Qwen3's precision in both earlier runs); answers stay faithful to the postings (0.87-0.99), and recall is low for every configuration.
 MiniLM + reranker scored highest in this run, but no model is a clear winner.
 
+**Observation: what can be seen**
+
+- 🟢 **Faithfulness is high everywhere** (0.87-0.99): answers stick to the retrieved postings and hardly invent anything.
+- 🟡 **Context precision is medium** (0.35-0.66): of the 5 chunks shown, roughly half to two thirds are relevant.
+- 🔴 **Context recall is low everywhere** (0.17-0.31): retrieval finds only part of the information a full answer would need.
+- 🏆 **The best setup is MiniLM + reranker**: the top score in all three metrics.
+- 🔵 **Without the reranker, Qwen3 ranks best** (precision 0.49) and Gemini ranks worst (0.35).
+
+**Results: each embedding model without → with the reranker**
+
+| Embedding model | Faithfulness | Context precision | Context recall | Reranker effect |
+| --- | --- | --- | --- | --- |
+| **MiniLM** (local) | 0.87 → 0.99 $\color{green}{\textbf{+0.12}}$ | 0.45 → 0.66 $\color{green}{\textbf{+0.21}}$ | 0.21 → 0.31 $\color{green}{\textbf{+0.10}}$ | 🟢 Clear gain in all three |
+| **Gemini** Embedding 2 | 0.93 → 0.93 $\color{gray}{\pm 0}$ | 0.35 → 0.59 $\color{green}{\textbf{+0.24}}$ | 0.17 → 0.29 $\color{green}{\textbf{+0.12}}$ | 🟢 Biggest precision gain |
+| **Qwen3**-Embedding-8B | 0.95 → 0.94 $\color{gray}{-0.01}$ | 0.49 → 0.50 $\color{gray}{+0.01}$ | 0.17 → 0.20 $\color{gray}{+0.03}$ | ⚪ No clear difference |
+
+- Each cell reads **without → with** the reranker, on the same 18 questions and the same queries.
+- The reranker helps most where the embedding's own ranking is weakest: Gemini +0.24 and MiniLM +0.21 in precision.
+- Qwen3 already ranks well on its own, so the reranker adds little; its changes are smaller than the run-to-run noise of 0.1-0.2.
+- The reranker runs locally, so it adds no cost per question, only about 44 seconds of loading at start.
+
 **Agent** (10 hand-written cases, first tool call only): Tool Selection Accuracy 100%, Parameter
 Accuracy 90%. The one miss is a reworded search request, which the strict comparison counts as
 wrong.
