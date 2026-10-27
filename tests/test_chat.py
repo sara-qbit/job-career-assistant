@@ -1430,7 +1430,50 @@ def test_contact_person_not_named_in_the_ad_is_never_used(tmp_path, store):
         ("Ms Muster", "English", "Attn: Ms Muster", "Dear Ms Muster,"),
         ("Mr Muster", "English", "Attn: Mr Muster", "Dear Mr Muster,"),
         ("Frau Dr. Muster", "English", "Attn: Frau Dr. Muster", "Dear Dr. Muster,"),
-        ("Ms J. Muster", "English", "Attn: Ms J. Muster", "Dear Ms J. Muster,"),
+        ("Ms J. Muster", "English", "Attn: Ms J. Muster", "Dear Ms Muster,"),
+        (
+            "Frau Dr. Anna Weber",
+            "German",
+            "z. Hd. Frau Dr. Anna Weber",
+            "Sehr geehrte Frau Dr. Weber,",
+        ),
+        ("Frau Dr. Anna Weber", "English", "Attn: Frau Dr. Anna Weber", "Dear Dr. Weber,"),
+        (
+            "Herr Prof. Dr. Thomas Krüger",
+            "German",
+            "z. Hd. Herrn Prof. Dr. Thomas Krüger",
+            "Sehr geehrter Herr Prof. Dr. Krüger,",
+        ),
+        (
+            "Frau Ursula von der Leyen",
+            "German",
+            "z. Hd. Frau Ursula von der Leyen",
+            "Sehr geehrte Frau von der Leyen,",
+        ),
+        (
+            "Frau von der Leyen",
+            "German",
+            "z. Hd. Frau von der Leyen",
+            "Sehr geehrte Frau von der Leyen,",
+        ),
+        (
+            "Herr von Weizsäcker",
+            "German",
+            "z. Hd. Herrn von Weizsäcker",
+            "Sehr geehrter Herr von Weizsäcker,",
+        ),
+        (
+            "Herr Dr.-Ing. Max Müller",
+            "German",
+            "z. Hd. Herrn Dr.-Ing. Max Müller",
+            "Sehr geehrter Herr Dr.-Ing. Müller,",
+        ),
+        (
+            "Frau Dr. rer. nat. Anna Weber",
+            "German",
+            "z. Hd. Frau Dr. rer. nat. Anna Weber",
+            "Sehr geehrte Frau Dr. rer. nat. Weber,",
+        ),
         (
             "Frau Muster, Personalabteilung",
             "German",
@@ -1440,7 +1483,7 @@ def test_contact_person_not_named_in_the_ad_is_never_used(tmp_path, store):
         (
             "Ansprechpartner: Herr Muster",
             "German",
-            "z. Hd. Herr Muster",
+            "z. Hd. Herrn Muster",
             "Sehr geehrter Herr Muster,",
         ),
     ],
@@ -1462,6 +1505,65 @@ def test_contact_person_with_a_salutation_is_greeted_by_name(
     layout = letter_layout(shown.letter.text)
     assert layout.recipient[1] == attention
     assert layout.salutation == greeting
+    assert all(check.passed for check in shown.letter.checks)
+
+
+@pytest.mark.parametrize(
+    ("employer", "address", "letter_address"),
+    [
+        (
+            "Nordlicht Analytics GmbH",
+            "Nordlicht Analytics GmbH, Karl-Liebknecht-Straße 12, 04107 Leipzig",
+            ["Karl-Liebknecht-Straße 12, 04107 Leipzig"],
+        ),
+        (
+            "Nordlicht Analytics GmbH",
+            "Nordlicht Analytics GmbH\nKarl-Liebknecht-Straße 12, 04107 Leipzig",
+            ["Karl-Liebknecht-Straße 12, 04107 Leipzig"],
+        ),
+        (
+            "Nordlicht Analytics GmbH",
+            "NORDLICHT ANALYTICS GMBH, Karl-Liebknecht-Straße 12, 04107 Leipzig",
+            ["Karl-Liebknecht-Straße 12, 04107 Leipzig"],
+        ),
+        # Only the whole company name is left out, never the start of a street or longer name.
+        ("Muster", "Musterstraße 5, 01067 Dresden", ["Musterstraße 5, 01067 Dresden"]),
+        ("ABC GmbH", "ABC GmbH & Co. KG, Weg 1", ["ABC GmbH & Co. KG, Weg 1"]),
+    ],
+)
+def test_company_name_is_not_repeated_when_the_address_starts_with_it(
+    tmp_path, store, employer, address, letter_address
+):
+    ad = FACTS_AD + f"{employer}\nBewerbungen an: {address}\n"
+    service = chat(
+        tmp_path,
+        store,
+        [ad_check(), proposed_facts(employer=employer, address=address), "Ok."],
+    )
+    (pasted,) = of_kind(list(service.send("c1", "", job_ad=ad)), PastedPostingEvent)
+    service = chat(tmp_path, store, letter_steps(pasted.job_id, GERMAN_GAPS))
+
+    (shown,) = of_kind(list(service.send("c1", "schreib das Anschreiben")), CoverLetterEvent)
+
+    assert letter_layout(shown.letter.text).recipient == [
+        employer,
+        "z. Hd. Frau Dr. Muster",
+        *letter_address,
+    ]
+    assert all(check.passed for check in shown.letter.checks)
+
+
+def test_company_name_ending_in_a_full_stop_gets_no_second_one(tmp_path, store):
+    employer = "Quantum Lab Dresden e. V."
+    ad = FACTS_AD + f"Arbeitgeber: {employer}\n"
+    service = chat(tmp_path, store, [ad_check(), proposed_facts(employer=employer), "Ok."])
+    (pasted,) = of_kind(list(service.send("c1", "", job_ad=ad)), PastedPostingEvent)
+    service = chat(tmp_path, store, letter_steps(pasted.job_id, GERMAN_GAPS))
+
+    (shown,) = of_kind(list(service.send("c1", "schreib das Anschreiben")), CoverLetterEvent)
+
+    assert f"bei {employer} Dieser Text" in shown.letter.text
+    assert "e. V.." not in shown.letter.text
     assert all(check.passed for check in shown.letter.checks)
 
 

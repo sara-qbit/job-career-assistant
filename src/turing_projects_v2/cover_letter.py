@@ -49,6 +49,10 @@ ATTENTION: dict[Language, str] = {"German": "z. Hd.", "English": "Attn:"}
 # A contact person named with Frau/Herr or Mr/Ms: the salutation and the name after it.
 CONTACT_PATTERN = re.compile(r"\b(Frau|Herrn?|Mrs?\.?|Ms\.?)\s+([^\s,;()][^,;()]*)")
 TITLE_PATTERN = re.compile(r"(Dr|Prof)\.")
+# A word of an academic title: "Prof.", "Dr.", "Dr.-Ing.", "rer.", "nat.", "h.c.".
+TITLE_WORD = re.compile(r"(?:Dr|Prof)\.(?:-[A-Za-z]+\.)?|[a-z][a-z.]*\.")
+# The lowercase words that begin a surname: "von der Leyen", "van Dyke".
+SURNAME_PARTICLES = frozenset({"von", "vom", "zu", "zur", "van", "de", "der", "den", "ten", "ter"})
 FEMALE_SALUTATIONS = frozenset({"Frau", "Ms", "Ms.", "Mrs", "Mrs."})
 
 
@@ -130,7 +134,9 @@ def write_cover_letter(
         "date": letter_date(local_date.date(), language),
         "github": profile.github,
         "company_name": info.company_name,
-        "company_address": _pasted_address(facts) if facts else _address(company),
+        "company_address": (
+            _pasted_address(facts, info.company_name) if facts else _address(company)
+        ),
         "contact_person": contact_line,
         "greeting": greeting,
         "job_name": info.job_name,
@@ -162,33 +168,62 @@ def _with_job_facts(info: JobInfo, facts: JobFacts) -> JobInfo:
     )
 
 
-def _pasted_address(facts: JobFacts) -> str | None:
-    """The address of the Job Facts, one line per line of the ad; without one, the city."""
+def _pasted_address(facts: JobFacts, company_name: str) -> str | None:
+    """The address of the Job Facts, one line per line of the ad; without one, the city.
+
+    The company name stands on the line above, so an address starting with it, followed by a
+    comma or a line break, leaves it out ("Muster GmbH, Hauptstraße 1, ..." becomes
+    "Hauptstraße 1, ..."; "Musterstraße 1" stays).
+    """
+    city = facts.city if facts.city != NOT_STATED_DE else None
     if facts.address is None:
-        return facts.city if facts.city != NOT_STATED_DE else None
+        return city
     lines = (" ".join(line.split()) for line in facts.address.splitlines())
-    return "\n".join(line for line in lines if line)
+    address = "\n".join(line for line in lines if line)
+    company = re.match(rf"{re.escape(company_name)}\s*(?:,|\n|$)\s*", address, re.IGNORECASE)
+    if company:
+        address = address[company.end() :]
+    return address or city
 
 
 def _contact_and_greeting(contact_person: str | None, language: Language) -> tuple[str | None, str]:
     """The "z. Hd." line (None without one) and the greeting of a letter in `language`.
 
-    Only a contact person named with Frau/Herr or Mr/Ms is greeted by name, as the ad writes it
-    (up to a comma, e.g. "Frau Dr. Muster, Personalabteilung"); anyone else gets the standard
-    greeting, so no name or gender is invented.
+    Only a contact person named with Frau/Herr or Mr/Ms is named, as the ad writes it (up to a
+    comma, e.g. "Frau Dr. Muster, Personalabteilung"), and greeted by title and surname
+    ("Sehr geehrte Frau Dr. Muster,"); anyone else gets the standard greeting, so no name or
+    gender is invented. The German line writes "Herrn": "z. Hd. Herrn Muster".
     """
     match = CONTACT_PATTERN.search(" ".join(contact_person.split())) if contact_person else None
     if match is None:
         return None, STANDARD_GREETING[language]
     salutation, name = match.group(1), match.group(2).rstrip()
     female = salutation in FEMALE_SALUTATIONS
+    surname = _without_first_names(name)
     if language == "German":
-        greeting = f"Sehr geehrte Frau {name}," if female else f"Sehr geehrter Herr {name},"
-    elif TITLE_PATTERN.match(name):  # "Dear Dr. Muster," without Ms/Mr
-        greeting = f"Dear {name},"
+        salutation = "Frau" if female else "Herrn"  # the "z. Hd." line, not the ad's word
+        greeting = f"Sehr geehrte Frau {surname}," if female else f"Sehr geehrter Herr {surname},"
+    elif TITLE_PATTERN.match(surname):  # "Dear Dr. Muster," without Ms/Mr
+        greeting = f"Dear {surname},"
     else:
-        greeting = f"Dear {'Ms' if female else 'Mr'} {name},"
+        greeting = f"Dear {'Ms' if female else 'Mr'} {surname},"
     return f"{ATTENTION[language]} {salutation} {name}", greeting
+
+
+def _without_first_names(name: str) -> str:
+    """`name` as a greeting writes it: titles and surname, e.g. "Dr. Weber" for "Dr. Anna Weber".
+
+    The surname is the last word, or the words from its first particle on ("von der Leyen").
+    """
+    words = name.split()
+    title_count = 0
+    while title_count < len(words) - 1 and TITLE_WORD.fullmatch(words[title_count]):
+        title_count += 1
+    names = words[title_count:]
+    surname_start = next(
+        (i for i, word in enumerate(names[:-1]) if word in SURNAME_PARTICLES), len(names) - 1
+    )
+    return " ".join(words[:title_count] + names[surname_start:])
 
 
 def letter_date(day: date, language: Language) -> str:
@@ -267,8 +302,10 @@ def fill(text: str, values: dict[str, str | None]) -> str:
     """`text` with each {{gap}} replaced by its value.
 
     A gap without a value is left out: with its whole line if it stands alone on it, else with
-    the space before it.
+    the space before it. A value ending in a full stop takes the place of the template's full
+    stop after the gap ("bei Muster e. V.", not "e. V..").
     """
+    text = _merged_full_stops(text, values)
     for gap, value in values.items():
         if value is None:
             text = re.sub(rf"^[ \t]*\{{\{{{gap}\}}\}}[ \t]*\n", "", text, flags=re.MULTILINE)
@@ -293,6 +330,7 @@ def check_letter(text: str, template: str, values: dict[str, str | None]) -> lis
     "Letter Template text", needs all of them in place and the fixed text unchanged. A changed
     fixed text fails every check.
     """
+    template = _merged_full_stops(template, values)
     expected = {gap: values.get(gap) for gaps in EXACT_GAPS.values() for gap in gaps}
     checks = [
         LetterCheck(
@@ -304,6 +342,14 @@ def check_letter(text: str, template: str, values: dict[str, str | None]) -> lis
     ]
     whole = _letter_pattern(template, expected).fullmatch(text) is not None
     return [*checks, LetterCheck(name="Letter Template text", passed=whole)]
+
+
+def _merged_full_stops(template: str, values: dict[str, str | None]) -> str:
+    """`template` without the full stop after each gap whose value ends in one."""
+    for gap, value in values.items():
+        if value and value.endswith("."):
+            template = template.replace(f"{{{{{gap}}}}}.", f"{{{{{gap}}}}}")
+    return template
 
 
 def _letter_pattern(template: str, pinned: dict[str, str | None]) -> re.Pattern[str]:
