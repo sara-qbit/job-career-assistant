@@ -1,10 +1,12 @@
 """The job tools: `search_jobs` (the Retriever), `get_job_description` (verbatim, no LLM),
-`create_job_info` (summaries checked by the judge), `write_cover_letter` and `change_job_facts`
-(the candidate's Target Role and language for a pasted Job Posting).
+`create_job_info` (summaries checked by the judge), `write_cover_letter`, `change_job_facts`
+(the candidate's Target Role and language for a pasted Job Posting), and `record_application` and
+`remove_application` (the pasted Job Postings the candidate applied for).
 
-Each tool returns a short text for the LLM plus an artifact (a JSON-ready dict) that the Chat
-service turns into answer events. Expected failures raise AppError subclasses; the agent hands
-their user message back to the LLM as the tool result.
+Each tool returns a short text for the LLM, most of them plus an artifact (a JSON-ready dict) that
+the Chat service turns into answer events; the Application tools return text only. Expected
+failures raise AppError subclasses; the agent hands their user message back to the LLM as the
+tool result.
 """
 
 from collections.abc import Callable
@@ -14,7 +16,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel
 
-from turing_projects_v2 import cover_letter, job_facts, job_info
+from turing_projects_v2 import applications, cover_letter, job_facts, job_info
 from turing_projects_v2.errors import UserInputError
 from turing_projects_v2.judge import Judge
 from turing_projects_v2.profile import CandidateProfile, TargetRole
@@ -181,10 +183,41 @@ def job_tools(
         )
         return content, facts.model_dump(mode="json")
 
+    @tool
+    def record_application(job_id: int) -> str:
+        """Record an Application for a pasted Job Posting, dated today. Use it only when the
+        candidate says they applied or asks to save the job ("save it", "I applied").
+
+        Args:
+            job_id: the job ID of the pasted posting.
+        """
+        application, new = applications.record_application(job_id, store)
+        applied_on = applications.german_date(application.applied_on)
+        if not new:
+            return f"Already applied on {applied_on}. Nothing was added; tell the candidate."
+        return f"Application for job ID {job_id} recorded: applied on {applied_on}."
+
+    @tool
+    def remove_application(job_id: int) -> str:
+        """Remove a wrong Application, when the candidate asks ("remove the application", "I
+        didn't apply"). The Job Posting stays stored.
+
+        Args:
+            job_id: the job ID of the posting.
+        """
+        application = applications.remove_application(job_id, store)
+        return (
+            f"Application for job ID {job_id} (applied on "
+            f"{applications.german_date(application.applied_on)}) removed; the Job Posting stays "
+            "stored."
+        )
+
     return [
         search_jobs,
         get_job_description,
         create_job_info,
         write_cover_letter,
         change_job_facts,
+        record_application,
+        remove_application,
     ]

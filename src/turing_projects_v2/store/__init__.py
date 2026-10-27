@@ -1,5 +1,5 @@
-"""Data store: SQLite repository for Job Postings, companies, Job Facts, Job Info, Cover Letters
-and logs.
+"""Data store: SQLite repository for Job Postings, companies, Job Facts, Applications, Job Info,
+Cover Letters and logs.
 
 Callers use domain operations only; the SQL stays inside this module.
 """
@@ -139,6 +139,13 @@ class JobFacts(BaseModel):
     """The suggested Target Role, or the one the candidate chose."""
     language: Language
     """The ad's language, or the one the candidate chose for the letter."""
+
+
+class Application(BaseModel):
+    """A pasted Job Posting the candidate applied for, dated the day they said so."""
+
+    job_id: int
+    applied_on: date
 
 
 class JobInfo(BaseModel):
@@ -358,6 +365,10 @@ class JobStore:
                 "CREATE TABLE IF NOT EXISTS job_facts ("
                 "job_id INTEGER PRIMARY KEY REFERENCES postings (job_id), facts TEXT NOT NULL)"
             )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS applications ("
+                "job_id INTEGER PRIMARY KEY REFERENCES postings (job_id), applied_on TEXT NOT NULL)"
+            )
             # The whole letter as JSON, plus the columns needed to find it.
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS cover_letters ("
@@ -555,6 +566,31 @@ class JobStore:
     def get_job_facts(self, job_id: int) -> JobFacts | None:
         row = self._db.execute("SELECT facts FROM job_facts WHERE job_id = ?", (job_id,)).fetchone()
         return JobFacts.model_validate_json(row["facts"]) if row else None
+
+    def add_application(self, application: Application) -> None:
+        """Add a new Application; a posting has at most one, never replaced."""
+        with self._db:
+            self._db.execute(
+                "INSERT INTO applications (job_id, applied_on) VALUES (?, ?)",
+                (application.job_id, application.applied_on.isoformat()),
+            )
+
+    def get_application(self, job_id: int) -> Application | None:
+        row = self._db.execute(
+            "SELECT job_id, applied_on FROM applications WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        return Application.model_validate(dict(row)) if row else None
+
+    def remove_application(self, job_id: int) -> None:
+        with self._db:
+            self._db.execute("DELETE FROM applications WHERE job_id = ?", (job_id,))
+
+    def applications(self) -> list[Application]:
+        """Every Application, oldest first."""
+        rows = self._db.execute(
+            "SELECT job_id, applied_on FROM applications ORDER BY applied_on, rowid"
+        ).fetchall()
+        return [Application.model_validate(dict(row)) for row in rows]
 
     def save_cover_letter(self, letter: CoverLetter) -> None:
         with self._db:

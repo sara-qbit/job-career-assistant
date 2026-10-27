@@ -6,10 +6,10 @@
 
 **Status:** ready-for-agent
 
-- [ ] "Save it" / "I applied" records an Application with today's local date and confirms it
-- [ ] A second request for the same Job Posting answers "Already applied on <DD.MM.YYYY>" and adds nothing
-- [ ] "Remove the application" / "I didn't apply" removes the Application; the Job Posting stays stored
-- [ ] An Application for a Kaggle Job Posting is refused with an explanation that only pasted jobs go on the Application Table
-- [ ] An Application can be recorded for a pasted Job Posting from an earlier Conversation
-- [ ] The system prompt says to record an Application only when the candidate says they applied or asks to save
-- [ ] Tests through the chat service; full suite and ruff green
+- [x] "Save it" / "I applied" records an Application with today's local date and confirms it
+- [x] A second request for the same Job Posting answers "Already applied on <DD.MM.YYYY>" and adds nothing
+- [x] "Remove the application" / "I didn't apply" removes the Application; the Job Posting stays stored
+- [x] An Application for a Kaggle Job Posting is refused with an explanation that only pasted jobs go on the Application Table
+- [x] An Application can be recorded for a pasted Job Posting from an earlier Conversation
+- [x] The system prompt says to record an Application only when the candidate says they applied or asks to save
+- [x] Tests through the chat service; full suite and ruff green

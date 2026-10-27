@@ -66,6 +66,8 @@ TOOL_STATUS = {
     "create_job_info": "Creating the Job Info and checking it",
     "write_cover_letter": "Writing the Cover Letter and checking it",
     "change_job_facts": "Changing the Job Facts",
+    "record_application": "Saving the Application",
+    "remove_application": "Removing the Application",
     "job_market_stats": "Computing job market statistics",
 }
 

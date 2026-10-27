@@ -67,6 +67,8 @@ class ConversationMemoryMiddleware(AgentMiddleware[ConversationState]):
             "create_job_info",
             "write_cover_letter",
             "change_job_facts",
+            "record_application",
+            "remove_application",
         ):
             update = {"current_job_id": request.tool_call["args"]["job_id"]}
         else:
