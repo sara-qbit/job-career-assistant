@@ -36,7 +36,11 @@ def create_job_info(job_id: int, store: JobStore, llm: BaseChatModel, judge: Jud
         raise UserInputError(f"No Job Posting has job ID {job_id}.")
     company = store.get_company(posting.company_id) if posting.company_id is not None else None
     role_source = _text(posting.description)
-    vision_source = _text(company.description if company else None)
+    # A pasted ad has no Kaggle company; what it says about the employer is the only source.
+    if posting.source == "pasted":
+        vision_source = role_source
+    else:
+        vision_source = _text(company.description if company else None)
     summaries = JobSummaries(role_summary=NOT_STATED, company_vision=NOT_STATED)
     if role_source or vision_source:
         blocks = [

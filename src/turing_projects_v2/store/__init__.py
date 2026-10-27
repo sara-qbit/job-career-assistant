@@ -3,12 +3,13 @@
 Callers use domain operations only; the SQL stays inside this module.
 """
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -49,6 +50,12 @@ POSTING_COLUMNS = {
     "fips": "TEXT",
 }
 
+PASTED_JOB_ID_START = 100_000_000_000
+"""The first job ID of a pasted Job Posting; Kaggle (LinkedIn) job IDs stay far below it."""
+
+# Only Kaggle postings make up the job market: the Knowledge Base, tagging and statistics.
+_KAGGLE = "source = 'kaggle'"
+
 # Kaggle companies/companies.csv columns with their SQLite types.
 COMPANY_COLUMNS = {
     "company_id": "INTEGER PRIMARY KEY",
@@ -83,6 +90,9 @@ class JobPosting(BaseModel):
     currency: str | None
     job_posting_url: str | None
     target_role: str | None
+    source: Literal["kaggle", "pasted"] = "kaggle"
+    pasted_on: date | None = None
+    """The day a pasted Job Posting was first pasted; None for Kaggle postings."""
 
 
 class Company(BaseModel):
@@ -255,7 +265,7 @@ def _posting_filter(
     target_roles_only: bool, target_role: str | None, work_type: str | None
 ) -> tuple[str, tuple[str, ...]]:
     """The WHERE clause and its parameters for the postings a statistic covers."""
-    conditions, parameters = [], []
+    conditions, parameters = [_KAGGLE], []
     if target_roles_only:
         conditions.append("target_role IS NOT NULL")
     if target_role is not None:
@@ -264,7 +274,7 @@ def _posting_filter(
     if work_type is not None:
         conditions.append("formatted_work_type = ?")
         parameters.append(work_type)
-    return ("WHERE " + " AND ".join(conditions) if conditions else ""), tuple(parameters)
+    return "WHERE " + " AND ".join(conditions), tuple(parameters)
 
 
 class JobStore:
@@ -284,6 +294,19 @@ class JobStore:
         with self._db:
             self._db.execute(
                 f"CREATE TABLE IF NOT EXISTS postings ({posting_columns}, target_role TEXT)"
+            )
+            # Databases created before pasted Job Postings lack these columns. `ad_key` is the
+            # hash of a pasted ad's whitespace-normalised text, which finds a repeated paste.
+            columns = {row["name"] for row in self._db.execute("PRAGMA table_info(postings)")}
+            for name, kind in (
+                ("source", "TEXT NOT NULL DEFAULT 'kaggle'"),
+                ("pasted_on", "TEXT"),
+                ("ad_key", "TEXT"),
+            ):
+                if name not in columns:
+                    self._db.execute(f"ALTER TABLE postings ADD COLUMN {name} {kind}")
+            self._db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS postings_ad_key ON postings (ad_key)"
             )
             self._db.execute(f"CREATE TABLE IF NOT EXISTS companies ({company_columns})")
             self._db.execute(
@@ -368,14 +391,15 @@ class JobStore:
         return count
 
     def count_postings(self) -> int:
-        return self._db.execute("SELECT COUNT(*) FROM postings").fetchone()[0]
+        """The number of Kaggle postings."""
+        return self._db.execute(f"SELECT COUNT(*) FROM postings WHERE {_KAGGLE}").fetchone()[0]
 
     def count_companies(self) -> int:
         return self._db.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
 
     def all_titles(self) -> list[tuple[int, str]]:
-        """(job ID, title) of every posting."""
-        return self._db.execute("SELECT job_id, title FROM postings").fetchall()
+        """(job ID, title) of every Kaggle posting."""
+        return self._db.execute(f"SELECT job_id, title FROM postings WHERE {_KAGGLE}").fetchall()
 
     def set_target_roles(self, tags: Iterable[tuple[int, str | None]]) -> None:
         """Set the Target Role (or None) of each given job ID in one transaction."""
@@ -386,9 +410,9 @@ class JobStore:
             )
 
     def count_by_target_role(self) -> dict[str | None, int]:
-        """Number of postings per Target Role; the None key counts untagged postings."""
+        """Number of Kaggle postings per Target Role; the None key counts untagged postings."""
         rows = self._db.execute(
-            "SELECT target_role, COUNT(*) FROM postings GROUP BY target_role"
+            f"SELECT target_role, COUNT(*) FROM postings WHERE {_KAGGLE} GROUP BY target_role"
         ).fetchall()
         return {role: count for role, count in rows}
 
@@ -396,7 +420,7 @@ class JobStore:
         """Per Target Role, its distinct tagged titles with counts, most frequent first."""
         rows = self._db.execute(
             "SELECT target_role, title, COUNT(*) AS n FROM postings "
-            "WHERE target_role IS NOT NULL GROUP BY target_role, title "
+            f"WHERE target_role IS NOT NULL AND {_KAGGLE} GROUP BY target_role, title "
             "ORDER BY target_role, n DESC, title"
         ).fetchall()
         result: dict[str, list[tuple[str, int]]] = {}
@@ -405,15 +429,38 @@ class JobStore:
         return result
 
     def tagged_postings(self) -> list[JobPosting]:
-        """Every posting with a Target Role, in job ID order."""
+        """Every Kaggle posting with a Target Role (the Knowledge Base), in job ID order."""
         rows = self._db.execute(
-            "SELECT * FROM postings WHERE target_role IS NOT NULL ORDER BY job_id"
+            f"SELECT * FROM postings WHERE target_role IS NOT NULL AND {_KAGGLE} ORDER BY job_id"
         ).fetchall()
         return [JobPosting.model_validate(dict(row)) for row in rows]
 
     def get_posting(self, job_id: int) -> JobPosting | None:
         row = self._db.execute("SELECT * FROM postings WHERE job_id = ?", (job_id,)).fetchone()
         return JobPosting.model_validate(dict(row)) if row else None
+
+    def pasted_posting(self, text: str) -> JobPosting | None:
+        """The pasted Job Posting with this ad text, ignoring differences in whitespace."""
+        row = self._db.execute(
+            "SELECT * FROM postings WHERE ad_key = ?", (_ad_key(text),)
+        ).fetchone()
+        return JobPosting.model_validate(dict(row)) if row else None
+
+    def add_pasted_posting(self, text: str, title: str, company_name: str | None) -> JobPosting:
+        """Store the ad `text` unchanged as a new pasted Job Posting, pasted today."""
+        with self._db:
+            (last,) = self._db.execute(
+                "SELECT MAX(job_id) FROM postings WHERE source = 'pasted'"
+            ).fetchone()
+            job_id = max(last or 0, PASTED_JOB_ID_START - 1) + 1
+            self._db.execute(
+                "INSERT INTO postings "
+                "(job_id, title, company_name, description, source, pasted_on, ad_key) "
+                "VALUES (?, ?, ?, ?, 'pasted', ?, ?)",
+                (job_id, title, company_name, text, date.today().isoformat(), _ad_key(text)),
+            )
+            row = self._db.execute("SELECT * FROM postings WHERE job_id = ?", (job_id,)).fetchone()
+        return JobPosting.model_validate(dict(row))
 
     def get_company(self, company_id: int) -> Company | None:
         row = self._db.execute(
@@ -520,8 +567,7 @@ class JobStore:
         Kaggle's normalized salary is the posting's salary converted to a yearly amount.
         """
         where, parameters = _posting_filter(target_roles_only, target_role, work_type)
-        stated = "currency = 'USD' AND normalized_salary > 0"
-        where = f"{where} AND {stated}" if where else f"WHERE {stated}"
+        where = f"{where} AND currency = 'USD' AND normalized_salary > 0"
         rows = self._db.execute(
             f"SELECT {_COUNT_BY['target_role']} AS label, normalized_salary FROM postings {where} "
             "ORDER BY label",
@@ -651,3 +697,8 @@ class JobStore:
             (conversation_id,),
         ).fetchall()
         return [TokenUsage.model_validate(dict(row)) for row in rows]
+
+
+def _ad_key(text: str) -> str:
+    """The key that finds a pasted ad again: a hash of its text with whitespace normalised."""
+    return hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()

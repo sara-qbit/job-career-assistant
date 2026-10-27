@@ -96,6 +96,7 @@ def posting(job_id, title, company, work_type):
             "job_id": job_id,
             "title": title,
             "company_name": company,
+            "source": "kaggle",
             "formatted_work_type": work_type,
         }
     )

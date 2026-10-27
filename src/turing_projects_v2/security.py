@@ -14,6 +14,9 @@ from turing_projects_v2.prompts import load_prompt
 
 MAX_MESSAGE_LENGTH = 2000
 
+MAX_JOB_AD_LENGTH = 30_000
+"""A pasted job ad bypasses the message limit; long German ads have 3,000-8,000 characters."""
+
 # How much of a message the security log keeps.
 EXCERPT_LENGTH = 200
 
@@ -49,6 +52,18 @@ def input_problem(message: str) -> str | None:
         )
     if CONTROL_CHARACTERS.search(message):
         return "Your message contains control characters. Please type or paste plain text."
+    return None
+
+
+def job_ad_problem(ad: str) -> str | None:
+    """Why the pasted job ad cannot be processed as given, or None if it can."""
+    if not ad.strip():
+        return "The job ad is empty. Please paste the full text of a job ad."
+    if len(ad) > MAX_JOB_AD_LENGTH:
+        return (
+            f"The job ad has {len(ad):,} characters; at most {MAX_JOB_AD_LENGTH:,} characters "
+            "are allowed. Please paste only the ad itself."
+        )
     return None
 
 

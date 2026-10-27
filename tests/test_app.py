@@ -6,7 +6,9 @@ from streamlit.testing.v1 import AppTest
 
 from tests.test_chat import (
     DESCRIPTION,
+    JOB_AD,
     FakeKnowledgeBases,
+    ad_check,
     call,
     chat,
     chat_store,
@@ -243,3 +245,20 @@ def test_ticking_a_test_question_approves_it(tmp_path, monkeypatch):
     assert [q.question for q in service.store.approved_test_questions()] == ["question 2"]
     app.checkbox(key=f"approve-{second.id}").uncheck().run()
     assert service.store.approved_test_questions() == []
+
+
+def test_a_long_job_ad_is_pasted_in_its_own_box_and_stored(tmp_path, monkeypatch):
+    store = chat_store(tmp_path)
+    service = chat(tmp_path, store, [ad_check(), "Got it."])
+    monkeypatch.setattr(chat_module, "open_chat_service", lambda settings: service)
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+
+    app.text_area(key="job_ad").set_value(JOB_AD)
+    app.button(key="send_job_ad").click().run()
+
+    assert not app.exception
+    posting = store.pasted_posting(JOB_AD)
+    assert posting.description == JOB_AD
+    assert any(f"job ID {posting.job_id}" in element.value for element in app.markdown)
+    assert "Got it." in [element.value for element in app.markdown]
+    assert app.text_area(key="job_ad").value == ""

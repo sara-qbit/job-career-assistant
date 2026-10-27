@@ -17,6 +17,7 @@ from turing_projects_v2.agent.chat import (
     JobDescriptionEvent,
     JobInfoEvent,
     MarketStatsEvent,
+    PastedPostingEvent,
     SecurityEvent,
     StatusEvent,
     TextEvent,
@@ -199,6 +200,14 @@ class AnswerView:
                 status = self._statuses.get(call_id) or st.status(event.name)
                 status.text(content)
                 status.update(state="error" if is_error else "complete")
+            case PastedPostingEvent(job_id=job_id, title=title, company=company, reused=reused):
+                self._text_area = None
+                at = f" at {company}" if company else ""
+                stored = "was already stored" if reused else "is stored"
+                st.markdown(
+                    f":material/content_paste: The job ad **{escape_markdown(title)}"
+                    f"{escape_markdown(at)}** {stored} as job ID {job_id}."
+                )
             case CitationsEvent(results=results):
                 self.citations = {result.number: result for result in results}
             case JobDescriptionEvent(description=description):

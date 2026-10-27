@@ -25,6 +25,7 @@ from turing_projects_v2.config import Settings
 from turing_projects_v2.errors import AppError, ExternalAPIError
 from turing_projects_v2.judge import Judge, open_judge
 from turing_projects_v2.llm import chat_model
+from turing_projects_v2.pasted_posting import NotAJobAdError, store_job_ad
 from turing_projects_v2.profile import CandidateProfile, load_profile
 from turing_projects_v2.rag.embeddings import load_embedder
 from turing_projects_v2.rag.indexer import KnowledgeBase, open_collection
@@ -41,6 +42,7 @@ from turing_projects_v2.security import (
     ScopeGuard,
     SecurityEventType,
     input_problem,
+    job_ad_problem,
     looks_like_injection,
     redacted,
 )
@@ -64,6 +66,9 @@ TOOL_STATUS = {
     "job_market_stats": "Computing job market statistics",
 }
 
+
+PASTED_AD_MESSAGE = "Here is a job ad."
+"""The question of a turn that sends a job ad without a typed message."""
 
 TITLE_LENGTH = 60
 """Longest Conversation title; the first question is cut at a word to fit."""
@@ -113,6 +118,16 @@ class CitationsEvent(BaseModel):
     trace: SearchTrace | None = None
 
 
+class PastedPostingEvent(BaseModel):
+    """The attached job ad is stored as this pasted Job Posting (`reused` if pasted before)."""
+
+    kind: Literal["pasted_posting"] = "pasted_posting"
+    job_id: int
+    title: str
+    company: str | None
+    reused: bool
+
+
 class JobDescriptionEvent(BaseModel):
     kind: Literal["job_description"] = "job_description"
     description: JobDescription
@@ -159,6 +174,7 @@ type AnswerEvent = Annotated[
     | ToolCallEvent
     | ToolResultEvent
     | CitationsEvent
+    | PastedPostingEvent
     | JobDescriptionEvent
     | JobInfoEvent
     | CoverLetterEvent
@@ -238,6 +254,7 @@ class ChatService:
         `default_search` is used for turns sent without search settings (SearchSettings() if
         None); `checkpointer` stores the Conversations (in memory if None)."""
         self._default_search = default_search or SearchSettings()
+        self._llm = llm
         self._store = store
         self._profile = profile
         self._scope_guard = scope_guard
@@ -253,19 +270,43 @@ class ChatService:
         )
 
     def send(
-        self, conversation_id: str, message: str, search: SearchSettings | None = None
+        self,
+        conversation_id: str,
+        message: str,
+        search: SearchSettings | None = None,
+        *,
+        job_ad: str | None = None,
     ) -> Iterator[AnswerEvent]:
         """Run one turn of the Conversation; never raises for expected failures.
 
         `search` is the embedding model and reranker choice for this turn's searches.
 
+        `job_ad` is the text of a job ad attached to the message (which may then be empty). It
+        has its own length limit, is stored as a pasted Job Posting that becomes the current
+        job, and reaches the agent only inside a data block.
+
         Token usage of every LLM call (also those inside tools) is recorded in the store and
         yielded as a UsageEvent.
         """
+        if job_ad is not None and not message.strip():
+            message = PASTED_AD_MESSAGE
         problem = input_problem(message)
         if problem is not None:
             yield self._security_event(conversation_id, "rejected_input", problem, message)
             return
+        if job_ad is not None:
+            problem = job_ad_problem(job_ad)
+            if problem is not None:
+                yield self._security_event(conversation_id, "rejected_input", problem, job_ad)
+                return
+            if looks_like_injection(job_ad):
+                yield self._security_event(
+                    conversation_id,
+                    "prompt_injection",
+                    "The job ad contains phrases often used to manipulate chatbots. It was "
+                    "flagged and logged; the assistant treats the ad as data only.",
+                    job_ad,
+                )
         if looks_like_injection(message):
             yield self._security_event(
                 conversation_id,
@@ -289,16 +330,40 @@ class ChatService:
             yield TextEvent(text=OFF_TOPIC_ANSWER)
             yield from _drained(usage_events)
             return
-        self._store.touch_conversation(conversation_id, _title(message))
+        question = HumanMessage(message, id=turn_id)
+        agent_input: dict[str, Any] = {"messages": [question]}
+        title = message
+        if job_ad is not None:
+            try:
+                posting, reused = store_job_ad(
+                    job_ad, self._store, self._llm, {"callbacks": [recorder]}
+                )
+            except NotAJobAdError as error:
+                yield TextEvent(text=error.user_message)
+                yield from _drained(usage_events)
+                return
+            except AppError as error:
+                yield ErrorEvent(message=error.user_message)
+                yield from _drained(usage_events)
+                return
+            pasted = PastedPostingEvent(
+                job_id=posting.job_id,
+                title=posting.title,
+                company=posting.company_name,
+                reused=reused,
+            )
+            yield pasted
+            agent_input = {
+                "messages": [_with_job_ad(question, job_ad, pasted)],
+                "current_job_id": posting.job_id,
+            }
+            title = f"Job ad: {posting.title}"
+        self._store.touch_conversation(conversation_id, _title(title))
         config = _thread(conversation_id)
         config["configurable"]["search"] = (search or self._default_search).model_dump()
         config["callbacks"] = [recorder]
         capped = False
-        stream = self._agent.stream(
-            {"messages": [HumanMessage(message, id=turn_id)]},
-            config,
-            stream_mode=["messages", "updates"],
-        )
+        stream = self._agent.stream(agent_input, config, stream_mode=["messages", "updates"])
         try:
             for mode, data in stream:
                 yield from _drained(usage_events)
@@ -375,7 +440,11 @@ class ChatService:
         for message in state.get("messages", []):
             if isinstance(message, HumanMessage):
                 turn_usage = [u for u in usage if u.turn_id is not None and u.turn_id == message.id]
-                turns.append(Turn(question=message.text, events=[], usage=turn_usage))
+                # A turn with a job ad keeps the typed question and the stored posting aside.
+                question = message.additional_kwargs.get("question", message.text)
+                pasted = message.additional_kwargs.get("pasted_posting")
+                events = [PastedPostingEvent.model_validate(pasted)] if pasted else []
+                turns.append(Turn(question=question, events=events, usage=turn_usage))
             elif turns:
                 turns[-1].events += _update_events(message)
                 if isinstance(message, AIMessage) and message.text:
@@ -419,6 +488,19 @@ def _title(question: str) -> str:
     if len(question) <= TITLE_LENGTH:
         return question
     return question[: TITLE_LENGTH - 1].rsplit(" ", 1)[0].rstrip(" ,.;:") + "…"
+
+
+def _with_job_ad(question: HumanMessage, job_ad: str, pasted: PastedPostingEvent) -> HumanMessage:
+    """The question with the attached job ad appended as a data block."""
+    stored = "was already stored" if pasted.reused else "is now stored"
+    return HumanMessage(
+        f"{question.text}\n\n"
+        f"[The candidate attached a job ad; it {stored} as job ID {pasted.job_id} and is the "
+        "current job.]\n"
+        f"<job_posting_data>\n{job_ad}\n</job_posting_data>",
+        id=question.id,
+        additional_kwargs={"question": question.text, "pasted_posting": pasted.model_dump()},
+    )
 
 
 def _drained(events: queue.SimpleQueue[UsageEvent]) -> Iterator[UsageEvent]:
