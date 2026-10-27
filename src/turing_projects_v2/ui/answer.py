@@ -32,7 +32,14 @@ from turing_projects_v2.documents import application_table_pdf, letter_docx, let
 from turing_projects_v2.job_info import NOT_STATED
 from turing_projects_v2.judge import Verdict
 from turing_projects_v2.rag.retriever import SearchResult
-from turing_projects_v2.store import CoverLetter, JobFacts, JobInfo, TokenUsage, UsageTotal
+from turing_projects_v2.store import (
+    NOT_STATED_DE,
+    CoverLetter,
+    JobFacts,
+    JobInfo,
+    TokenUsage,
+    UsageTotal,
+)
 from turing_projects_v2.tools.stats import MarketStats
 
 CITATION = re.compile(r"\[(\d+)\](?!\()")
@@ -77,8 +84,18 @@ def show_job_facts(facts: JobFacts) -> None:
             "Employer, position and city are copied word for word from the ad; Vollzeit/Teilzeit "
             "and Präsenz/Online/Hybrid are backed by the quoted words of the ad."
         )
-        st.markdown(f"**Target Role:** {facts.target_role}  \n**Language:** {facts.language}")
-        st.caption('Change them in the chat, e.g. "use Grant Management" or "write it in English".')
+        address = "  \n".join(
+            escape_markdown(line) for line in (facts.address or NOT_STATED_DE).splitlines()
+        )
+        st.markdown(
+            f"**Address:** {address}  \n"
+            f"**Contact person:** {escape_markdown(facts.contact_person or NOT_STATED_DE)}  \n"
+            f"**Target Role:** {facts.target_role}  \n**Language:** {facts.language}"
+        )
+        st.caption(
+            'Change them in the chat, e.g. "use Grant Management", "write it in English" or '
+            '"the address is ...".'
+        )
 
 
 def show_job_info(info: JobInfo) -> None:

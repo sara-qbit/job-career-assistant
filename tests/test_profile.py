@@ -70,6 +70,8 @@ def test_ai_letter_template_marks_its_gaps():
         "candidate_email",
         "github",
         "date",
+        "contact_person",
+        "greeting",
         "company_name",
         "company_address",
         "job_name",
@@ -173,7 +175,7 @@ def test_german_letter_templates_are_german_with_the_english_templates_gaps():
         german = profile.template_for(role, "German")
         assert german.name == name
         assert german.language == "German"
-        assert "Sehr geehrte" in german.text
+        assert "Mit freundlichen Grüßen" in german.text
         assert german.gaps == profile.template_for(role, "English").gaps
 
 

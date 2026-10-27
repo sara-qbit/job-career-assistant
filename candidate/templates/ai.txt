@@ -6,13 +6,14 @@ Tel.: {{candidate_phone}}
 {{candidate_email}}
 
 {{company_name}}
+{{contact_person}}
 {{company_address}}
 
 {{candidate_city}}, {{date}}
 
 Application for the position of {{job_name}}
 
-Dear Mr/Ms Hiring Manager,
+{{greeting}}
 I am writing to apply for {{job_name}} {{work_type}} at {{company_name}}. If possible, I would like to start on 1 January 2027. I am currently transitioning my career towards AI engineering and would greatly appreciate the opportunity to apply my AI engineering knowledge to the design and management of AI systems. I am highly motivated to take on a responsible and dedicated role and to support top management in achieving the {{company_vision}}
 My foundation in AI dates back to my doctoral studies, which I completed in 2018, before the current generation of generative AI existed. Rather than viewing this as a gap, I have been working purposefully to close it. I am currently completing a government-funded training programme in AI Engineering through the German Federal Employment Agency (Agentur für Arbeit), which ends on 21 December 2026 and covers the following topics:
 - Fundamentals of LLM application development

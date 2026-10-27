@@ -1,8 +1,10 @@
 """Cover Letter: the Letter Template of the posting's Target Role, filled in for one posting.
 
 A pasted Job Posting takes its Target Role, language, employer and position from its Job Facts, so
-a German ad gets the German Letter Template (never a translation). A Kaggle Job Posting gets the
-English Letter Template of its tagged Target Role.
+a German ad gets the German Letter Template (never a translation). It is addressed to the address
+of its Job Facts (else the employer's city) and, if the ad names one with Frau/Herr or Mr/Ms, to
+the contact person, who is then greeted by name. A Kaggle Job Posting gets the English Letter
+Template of its tagged Target Role and the standard greeting.
 
 Only the gaps are filled. Candidate details and the job name, company and work type are copied
 exactly by code; the LLM writes only the two summary gaps, each completing its template sentence
@@ -37,6 +39,17 @@ GERMAN_MONTHS = (
     "Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
     "November", "Dezember",
 )  # fmt: skip
+
+STANDARD_GREETING: dict[Language, str] = {
+    "German": "Sehr geehrte Damen und Herren,",
+    "English": "Dear Hiring Team,",
+}
+ATTENTION: dict[Language, str] = {"German": "z. Hd.", "English": "Attn:"}
+
+# A contact person named with Frau/Herr or Mr/Ms: the salutation and the name after it.
+CONTACT_PATTERN = re.compile(r"\b(Frau|Herrn?|Mrs?\.?|Ms\.?)\s+([^\s,;()][^,;()]*)")
+TITLE_PATTERN = re.compile(r"(Dr|Prof)\.")
+FEMALE_SALUTATIONS = frozenset({"Frau", "Ms", "Ms.", "Mrs", "Mrs."})
 
 
 class LetterGaps(BaseModel):
@@ -103,6 +116,9 @@ def write_cover_letter(
         verdicts |= {gap: _judged(judge, gap, gaps, info, sources) for gap in fabricated}
     written_at = datetime.now(UTC)
     local_date = written_at.astimezone()
+    contact_line, greeting = _contact_and_greeting(
+        facts.contact_person if facts else None, language
+    )
     values = {
         "candidate_name": profile.name,
         "candidate_street": profile.street,
@@ -114,7 +130,9 @@ def write_cover_letter(
         "date": letter_date(local_date.date(), language),
         "github": profile.github,
         "company_name": info.company_name,
-        "company_address": _address(company),
+        "company_address": _pasted_address(facts) if facts else _address(company),
+        "contact_person": contact_line,
+        "greeting": greeting,
         "job_name": info.job_name,
         "work_type": info.work_type,
         "company_vision": gaps.company_vision,
@@ -126,7 +144,7 @@ def write_cover_letter(
         target_role=target_role,
         template_name=template.name,
         text=text,
-        checks=check_letter(text, template.text, info),
+        checks=check_letter(text, template.text, values),
         company_vision_verdict=verdicts["company_vision"],
         role_summary_verdict=verdicts["role_summary"],
         rewritten=bool(fabricated),
@@ -142,6 +160,35 @@ def _with_job_facts(info: JobInfo, facts: JobFacts) -> JobInfo:
     return info.model_copy(
         update={field: value for field, value in stated.items() if value != NOT_STATED_DE}
     )
+
+
+def _pasted_address(facts: JobFacts) -> str | None:
+    """The address of the Job Facts, one line per line of the ad; without one, the city."""
+    if facts.address is None:
+        return facts.city if facts.city != NOT_STATED_DE else None
+    lines = (" ".join(line.split()) for line in facts.address.splitlines())
+    return "\n".join(line for line in lines if line)
+
+
+def _contact_and_greeting(contact_person: str | None, language: Language) -> tuple[str | None, str]:
+    """The "z. Hd." line (None without one) and the greeting of a letter in `language`.
+
+    Only a contact person named with Frau/Herr or Mr/Ms is greeted by name, as the ad writes it
+    (up to a comma, e.g. "Frau Dr. Muster, Personalabteilung"); anyone else gets the standard
+    greeting, so no name or gender is invented.
+    """
+    match = CONTACT_PATTERN.search(" ".join(contact_person.split())) if contact_person else None
+    if match is None:
+        return None, STANDARD_GREETING[language]
+    salutation, name = match.group(1), match.group(2).rstrip()
+    female = salutation in FEMALE_SALUTATIONS
+    if language == "German":
+        greeting = f"Sehr geehrte Frau {name}," if female else f"Sehr geehrter Herr {name},"
+    elif TITLE_PATTERN.match(name):  # "Dear Dr. Muster," without Ms/Mr
+        greeting = f"Dear {name},"
+    else:
+        greeting = f"Dear {'Ms' if female else 'Mr'} {name},"
+    return f"{ATTENTION[language]} {salutation} {name}", greeting
 
 
 def letter_date(day: date, language: Language) -> str:
@@ -229,24 +276,31 @@ def fill(text: str, values: dict[str, str | None]) -> str:
     return GAP_PATTERN.sub(lambda match: values[match.group(1)] or "", text)
 
 
-# The gaps copied exactly from the Job Info (gap and JobInfo field share the name), by check name.
-EXACT_FIELDS = {"Job name": "job_name", "Company": "company_name", "Work type": "work_type"}
+# The gaps copied exactly from the Job Info and the Job Facts or company data, by check name.
+EXACT_GAPS = {
+    "Job name": ("job_name",),
+    "Company": ("company_name",),
+    "Work type": ("work_type",),
+    "Address": ("company_address",),
+    "Contact person": ("contact_person", "greeting"),
+}
 
 
-def check_letter(text: str, template: str, info: JobInfo) -> list[LetterCheck]:
-    """Checks that the letter is the template with the Job Info's exact fields in their gaps.
+def check_letter(text: str, template: str, values: dict[str, str | None]) -> list[LetterCheck]:
+    """Checks that the letter is the template with the exact `values` in their gaps.
 
-    Each field is checked on its own, with the other gaps allowed to hold anything; the last
-    check, "Letter Template text", needs all of them in place and the fixed text unchanged. A
-    changed fixed text fails every check.
+    Each check pins its gaps, with the other gaps allowed to hold anything; the last check,
+    "Letter Template text", needs all of them in place and the fixed text unchanged. A changed
+    fixed text fails every check.
     """
-    expected = {gap: getattr(info, gap) for gap in EXACT_FIELDS.values()}
+    expected = {gap: values.get(gap) for gaps in EXACT_GAPS.values() for gap in gaps}
     checks = [
         LetterCheck(
             name=name,
-            passed=_letter_pattern(template, {gap: expected[gap]}).fullmatch(text) is not None,
+            passed=_letter_pattern(template, {gap: expected[gap] for gap in gaps}).fullmatch(text)
+            is not None,
         )
-        for name, gap in EXACT_FIELDS.items()
+        for name, gaps in EXACT_GAPS.items()
     ]
     whole = _letter_pattern(template, expected).fullmatch(text) is not None
     return [*checks, LetterCheck(name="Letter Template text", passed=whole)]
@@ -256,7 +310,7 @@ def _letter_pattern(template: str, pinned: dict[str, str | None]) -> re.Pattern[
     """A pattern for letters filled from `template` (see `fill`).
 
     Pinned gaps must hold exactly their value (None: left out); any other gap may hold any one
-    line of text or be left out.
+    line of text or be left out, or, alone on its line, any lines (an address may span lines).
     """
     parts: list[str] = []
     position = 0
@@ -275,7 +329,7 @@ def _letter_pattern(template: str, pinned: dict[str, str | None]) -> re.Pattern[
             continue
         value = re.escape(pinned[gap]) if gap in pinned else r"[^\n]*?"
         if alone:
-            parts.append(rf"{value}\n" if gap in pinned else rf"(?:{value}\n)?")
+            parts.append(rf"{value}\n" if gap in pinned else rf"(?:{value}\n)*?")
         elif spaced:
             parts.append(f" {value}" if gap in pinned else f"(?: {value})?")
         else:

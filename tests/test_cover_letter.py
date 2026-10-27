@@ -124,6 +124,8 @@ def test_a_correct_letter_passes_every_check(tmp_path):
         ("Job name", True),
         ("Company", True),
         ("Work type", True),
+        ("Address", True),
+        ("Contact person", True),
         ("Letter Template text", True),
     ]
 
@@ -134,6 +136,7 @@ def test_a_correct_letter_passes_every_check(tmp_path):
         ("for AI Engineer Full-time", "for ML Engineer Full-time", "Job name"),
         ("at Acme Corp.", "at Acme Inc.", "Company"),
         ("Engineer Full-time at", "Engineer Contract at", "Work type"),
+        ("1 Rocket Way", "2 Rocket Way", "Address"),
         ("I would like to contribute", "I would love to contribute", "Letter Template text"),
     ],
 )
@@ -145,7 +148,14 @@ def test_checks_fail_when_the_letter_differs_from_the_job_info_or_template(
     tampered = letter.text.replace(wrong, right)
     assert tampered != letter.text
 
-    checks = check_letter(tampered, TEMPLATE, store.get_job_info(1))
+    info = store.get_job_info(1)
+    exact = {"job_name": info.job_name, "company_name": info.company_name}
+    expected = exact | {
+        "work_type": info.work_type,
+        "company_address": "1 Rocket Way, Austin, TX 78701",
+    }
+
+    checks = check_letter(tampered, TEMPLATE, expected)
 
     failed = {check.name for check in checks if not check.passed}
     assert failing in failed

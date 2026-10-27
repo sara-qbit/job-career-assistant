@@ -923,7 +923,10 @@ def test_job_facts_reach_the_llm_and_survive_reopening_the_conversation(tmp_path
     )
 
     assert "<job_facts_data>\nEmployer: Universität Beispielstadt\n" in llm.calls[-1][-1].text
-    assert "Target Role: AI Engineer\nLanguage: German\n</job_facts_data>" in llm.calls[-1][-1].text
+    assert (
+        "Language: German\nAddress: Hauptstraße 1, 12345 Beispielstadt\n"
+        "Contact person: Frau Dr. Muster\n</job_facts_data>"
+    ) in llm.calls[-1][-1].text
     (turn,) = reopened.conversation("c1").turns
     assert of_kind(turn.events, JobFactsEvent) == [card]
 
@@ -1315,7 +1318,7 @@ def test_german_ad_gets_a_letter_from_the_german_letter_template(tmp_path, store
     assert all(check.passed for check in letter.checks)
     assert letter.verdicts["Role summary"].value == "supported"
     # The German template went to the LLM as written: nothing to translate.
-    assert "Sehr geehrte Damen und Herren," in llm.calls[-2][-1].text
+    assert "Mit freundlichen Grüßen" in llm.calls[-2][-1].text
     layout = letter_layout(letter.text)
     assert (layout.date, layout.subject) == (
         f"Sample Town, {german_date}",
@@ -1371,3 +1374,132 @@ def test_system_prompt_says_never_to_translate_a_letter_template(tmp_path, store
     list(chat_with(tmp_path, store, llm).send("c1", "hi"))
 
     assert "Never translate a Letter Template" in llm.calls[0][0].text
+
+
+GERMAN_GAPS = LetterGaps(company_vision="der Forschung", role_summary="zu LLMs zu forschen")
+
+
+def test_german_letter_is_addressed_to_the_address_and_contact_person_of_the_ad(tmp_path, store):
+    job_id = pasted_job_posting_id(tmp_path, store)
+    service = chat(tmp_path, store, letter_steps(job_id, GERMAN_GAPS))
+
+    events = list(service.send("c1", "schreib das Anschreiben"))
+
+    (shown,) = of_kind(events, CoverLetterEvent)
+    letter = shown.letter
+    layout = letter_layout(letter.text)
+    assert layout.recipient == [
+        "Universität Beispielstadt",
+        "z. Hd. Frau Dr. Muster",
+        "Hauptstraße 1, 12345 Beispielstadt",
+    ]
+    assert layout.salutation == "Sehr geehrte Frau Dr. Muster,"
+    assert all(check.passed for check in letter.checks)
+    assert {"Address", "Contact person"} <= {check.name for check in letter.checks}
+
+
+def test_letter_without_address_or_contact_person_has_the_city_and_the_standard_greeting(
+    tmp_path, store
+):
+    job_id = pasted_job_posting_id(tmp_path, store, address="", contact_person="")
+    service = chat(tmp_path, store, letter_steps(job_id, GERMAN_GAPS))
+
+    (shown,) = of_kind(list(service.send("c1", "schreib das Anschreiben")), CoverLetterEvent)
+
+    layout = letter_layout(shown.letter.text)
+    assert layout.recipient == ["Universität Beispielstadt", "Beispielstadt"]
+    assert layout.salutation == "Sehr geehrte Damen und Herren,"
+    assert "z. Hd." not in shown.letter.text
+    assert all(check.passed for check in shown.letter.checks)
+
+
+def test_contact_person_not_named_in_the_ad_is_never_used(tmp_path, store):
+    job_id = pasted_job_posting_id(tmp_path, store, contact_person="Frau Prof. Erfunden")
+    service = chat(tmp_path, store, letter_steps(job_id, GERMAN_GAPS))
+
+    (shown,) = of_kind(list(service.send("c1", "schreib das Anschreiben")), CoverLetterEvent)
+
+    assert "Erfunden" not in shown.letter.text
+    assert letter_layout(shown.letter.text).salutation == "Sehr geehrte Damen und Herren,"
+
+
+@pytest.mark.parametrize(
+    ("contact", "language", "attention", "greeting"),
+    [
+        ("Herrn Muster", "German", "z. Hd. Herrn Muster", "Sehr geehrter Herr Muster,"),
+        ("Ms Muster", "English", "Attn: Ms Muster", "Dear Ms Muster,"),
+        ("Mr Muster", "English", "Attn: Mr Muster", "Dear Mr Muster,"),
+        ("Frau Dr. Muster", "English", "Attn: Frau Dr. Muster", "Dear Dr. Muster,"),
+        ("Ms J. Muster", "English", "Attn: Ms J. Muster", "Dear Ms J. Muster,"),
+        (
+            "Frau Muster, Personalabteilung",
+            "German",
+            "z. Hd. Frau Muster",
+            "Sehr geehrte Frau Muster,",
+        ),
+        (
+            "Ansprechpartner: Herr Muster",
+            "German",
+            "z. Hd. Herr Muster",
+            "Sehr geehrter Herr Muster,",
+        ),
+    ],
+)
+def test_contact_person_with_a_salutation_is_greeted_by_name(
+    tmp_path, store, contact, language, attention, greeting
+):
+    ad = FACTS_AD + f"Ansprechperson: {contact}\n"
+    service = chat(
+        tmp_path,
+        store,
+        [ad_check(), proposed_facts(contact_person=contact, language=language), "Ok."],
+    )
+    (pasted,) = of_kind(list(service.send("c1", "", job_ad=ad)), PastedPostingEvent)
+    service = chat(tmp_path, store, letter_steps(pasted.job_id, GERMAN_GAPS))
+
+    (shown,) = of_kind(list(service.send("c1", "write the letter")), CoverLetterEvent)
+
+    layout = letter_layout(shown.letter.text)
+    assert layout.recipient[1] == attention
+    assert layout.salutation == greeting
+    assert all(check.passed for check in shown.letter.checks)
+
+
+def test_contact_person_without_frau_or_herr_gets_the_standard_greeting(tmp_path, store):
+    ad = FACTS_AD + "Ansprechperson: Dr. Kim Muster\n"
+    service = chat(
+        tmp_path,
+        store,
+        [ad_check(), proposed_facts(contact_person="Dr. Kim Muster", language="English"), "Ok."],
+    )
+    (pasted,) = of_kind(list(service.send("c1", "", job_ad=ad)), PastedPostingEvent)
+    service = chat(tmp_path, store, letter_steps(pasted.job_id, GERMAN_GAPS))
+
+    (shown,) = of_kind(list(service.send("c1", "write the letter")), CoverLetterEvent)
+
+    assert letter_layout(shown.letter.text).salutation == "Dear Hiring Team,"
+    assert "Kim" not in shown.letter.text
+
+
+def test_the_candidate_can_give_the_address_and_the_next_letter_uses_it(tmp_path, store):
+    job_id = pasted_job_posting_id(tmp_path, store, address="")
+    address = "Institut für Informatik\nPostfach 7, 12345 Beispielstadt"
+    llm = FakeChatModel(
+        responses=[call("change_job_facts", {"job_id": job_id, "address": address}), "Changed."]
+    )
+    events = list(chat_with(tmp_path, store, llm).send("c1", f"The address is {address}"))
+
+    (card,) = of_kind(events, JobFactsEvent)
+    assert card.facts.address == address
+    assert "Address: Institut für Informatik" in of_kind(events, ToolResultEvent)[0].content
+    service = chat(tmp_path, store, letter_steps(job_id, GERMAN_GAPS))
+
+    (shown,) = of_kind(list(service.send("c1", "schreib das Anschreiben")), CoverLetterEvent)
+
+    assert letter_layout(shown.letter.text).recipient == [
+        "Universität Beispielstadt",
+        "z. Hd. Frau Dr. Muster",
+        "Institut für Informatik",
+        "Postfach 7, 12345 Beispielstadt",
+    ]
+    assert all(check.passed for check in shown.letter.checks)

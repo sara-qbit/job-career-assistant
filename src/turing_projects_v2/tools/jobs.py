@@ -163,19 +163,24 @@ def job_tools(
 
     @tool(response_format="content_and_artifact")
     def change_job_facts(
-        job_id: int, target_role: TargetRole | None = None, language: Language | None = None
+        job_id: int,
+        target_role: TargetRole | None = None,
+        language: Language | None = None,
+        address: str | None = None,
     ) -> tuple[str, dict]:
-        """Change the Target Role or the letter language in the Job Facts of a pasted Job
-        Posting, when the candidate asks (e.g. "use Grant Management", "write it in English"),
-        and show the changed Job Facts card.
+        """Change the Target Role, the letter language or the recipient address in the Job
+        Facts of a pasted Job Posting, when the candidate asks (e.g. "use Grant Management",
+        "write it in English", "the address is ..."), and show the changed Job Facts card.
 
         Args:
             job_id: the job ID of the pasted posting.
             target_role: the Target Role the candidate chose, if they changed it.
             language: the language the candidate chose for the letter, if they changed it.
+            address: the postal address the candidate gave, copied exactly with one line per
+                address line, if they gave one.
         """
         facts = job_facts.change_job_facts(
-            job_id, store, llm, target_role=target_role, language=language
+            job_id, store, llm, target_role=target_role, language=language, address=address
         )
         content = (
             f"The changed Job Facts of job ID {job_id} are now shown to the candidate in their "

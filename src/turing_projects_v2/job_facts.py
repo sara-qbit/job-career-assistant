@@ -96,8 +96,10 @@ def change_job_facts(
     *,
     target_role: TargetRole | None = None,
     language: Language | None = None,
+    address: str | None = None,
 ) -> JobFacts:
-    """Set the Target Role and/or the language of the Job Facts of the pasted posting `job_id`.
+    """Set the Target Role, the language and/or the recipient address of the Job Facts of the
+    pasted posting `job_id`. The address is the candidate's own, so it is stored as given.
 
     A posting pasted before Job Facts existed gets them created first.
     """
@@ -107,7 +109,7 @@ def change_job_facts(
     if posting.source != "pasted":
         raise UserInputError(f"Job ID {job_id} has no Job Facts: only pasted job ads have them.")
     facts = create_job_facts(posting, store, llm)
-    changes = {"target_role": target_role, "language": language}
+    changes = {"target_role": target_role, "language": language, "address": address}
     facts = facts.model_copy(update={k: v for k, v in changes.items() if v is not None})
     store.save_job_facts(facts)
     return facts
@@ -133,5 +135,7 @@ def facts_text(facts: JobFacts) -> str:
             f"Präsenz/Online/Hybrid: {facts.work_mode}",
             f"Target Role: {facts.target_role}",
             f"Language: {facts.language}",
+            f"Address: {facts.address or NOT_STATED_DE}",
+            f"Contact person: {facts.contact_person or NOT_STATED_DE}",
         ]
     )

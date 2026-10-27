@@ -46,9 +46,10 @@ PROFILE_GAPS = frozenset(
 JOB_GAPS = frozenset(
     {"company_name", "company_address", "job_name", "work_type", "company_vision", "role_summary"}
 )
-LETTER_GAPS = frozenset({"date"})
-"""Filled when the letter is written: the day in the letter's language, e.g. "25 October 2026"
-or "25. Oktober 2026"."""
+LETTER_GAPS = frozenset({"date", "contact_person", "greeting"})
+"""Filled when the letter is written, in the letter's language: the day, e.g. "25 October 2026"
+or "25. Oktober 2026"; the "z. Hd." line of the ad's contact person (left out without one); and
+the greeting, "Sehr geehrte Frau Dr. Muster," or the standard one."""
 KNOWN_GAPS = PROFILE_GAPS | JOB_GAPS | LETTER_GAPS
 
 
