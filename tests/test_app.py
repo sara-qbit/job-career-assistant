@@ -91,6 +91,12 @@ def test_sidebar_starts_with_gemini_and_the_reranker_on():
     assert app.sidebar.toggle(key="rerank").value is True
 
 
+def test_sidebar_shows_the_app_version():
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+
+    assert "Job Career Assistant v1.0" in [caption.value for caption in app.sidebar.caption]
+
+
 def test_sidebar_choices_are_used_for_the_search(tmp_path, monkeypatch):
     store = chat_store(tmp_path)
     knowledge_bases = FakeKnowledgeBases(tmp_path, store)

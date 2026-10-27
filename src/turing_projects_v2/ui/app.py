@@ -8,6 +8,7 @@ The left sidebar starts a new chat, reopens past Conversations, and holds the se
 (embedding model and reranker) used for every search of the next answer.
 """
 
+from importlib.metadata import version
 from pathlib import Path
 
 import streamlit as st
@@ -74,6 +75,12 @@ def conversation_list() -> None:
             )
 
 
+def app_version() -> None:
+    """The app's version at the bottom of the sidebar, e.g. "Job Career Assistant v1.0"."""
+    major, minor, *_ = version("turing-projects-v2").split(".")
+    st.sidebar.caption(f"Job Career Assistant v{major}.{minor}")
+
+
 st.set_page_config(page_title="Job Career Assistant", page_icon="💼")
 try:
     settings = load_settings()
@@ -95,3 +102,4 @@ page = st.navigation(
 page.run()
 # Last, so that a Conversation started by this run's question is listed too.
 conversation_list()
+app_version()
