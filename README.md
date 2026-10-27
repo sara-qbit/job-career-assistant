@@ -267,8 +267,9 @@ scope, data, tools and wording, and reviewed every ticket before it was committe
 
 **Improvement ideas**
 
-1. **v2 with the Bundesagentur für Arbeit Jobsuche API** for current German postings, with German
-   Letter Templates.
+1. **v2 for current German postings:** paste or upload one job description (German or English),
+   German Letter Templates, a "save" tool for the jobs applied to, and a daily German table PDF of
+   saved applications for the Arbeitsagentur.
 2. **More postings for the small roles:** broader title variants and further sources for quantum
    and innovation roles.
 3. **Tighter tagging:** exclude phrases such as "SME" or "Treasury" for Quantum, and review every
@@ -304,4 +305,4 @@ scope, data, tools and wording, and reviewed every ticket before it was committe
 
 Job postings come from [LinkedIn Job Postings (2023-2024)](https://www.kaggle.com/datasets/arshkon/linkedin-job-postings)
 by Arsh Koneru on Kaggle, licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
-v1 uses this dataset; v2 will use the Bundesagentur für Arbeit Jobsuche API for German postings.
+v1 uses this dataset; v2 adds German postings that the candidate pastes or uploads one at a time.
