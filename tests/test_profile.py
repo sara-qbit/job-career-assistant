@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.candidate_fixture import write_example_candidate_dir
 from turing_projects_v2.config import PROJECT_ROOT
 from turing_projects_v2.errors import ConfigError, DataValidationError
 from turing_projects_v2.profile import load_profile
@@ -34,6 +35,11 @@ def write_candidate_dir(tmp_path: Path, profile: str, templates: dict[str, str])
     return tmp_path
 
 
+@pytest.fixture
+def example_profile(tmp_path):
+    return load_profile(write_example_candidate_dir(tmp_path))
+
+
 def test_candidate_profile_holds_the_candidates_details(tmp_path):
     # Its own profile file: the real one in candidate/ may hold the candidate's private details.
     templates = {
@@ -48,17 +54,15 @@ def test_candidate_profile_holds_the_candidates_details(tmp_path):
     assert profile.phone == "0123 456"
 
 
-def test_ai_roles_use_the_ai_letter_template():
-    profile = load_profile(CANDIDATE_DIR)
-
+def test_ai_roles_use_the_ai_letter_template(example_profile):
     for role in ["AI Engineer", "AI Innovation Manager", "Quantum Software Developer"]:
-        template = profile.template_for(role, "English")
+        template = example_profile.template_for(role, "English")
         assert template.name == "ai"
         assert "I am currently transitioning my career towards AI engineering" in template.text
 
 
-def test_ai_letter_template_marks_its_gaps():
-    template = load_profile(CANDIDATE_DIR).template_for("AI Engineer", "English")
+def test_ai_letter_template_marks_its_gaps(example_profile):
+    template = example_profile.template_for("AI Engineer", "English")
 
     assert template.gaps == {
         "candidate_name",
@@ -81,26 +85,20 @@ def test_ai_letter_template_marks_its_gaps():
     }
 
 
-def test_grant_management_uses_the_grant_letter_template_with_the_same_gaps():
-    profile = load_profile(CANDIDATE_DIR)
-
-    template = profile.template_for("Grant Management Specialist", "English")
+def test_grant_management_uses_the_grant_letter_template_with_the_same_gaps(example_profile):
+    template = example_profile.template_for("Grant Management Specialist", "English")
 
     assert template.name == "grant"
     assert "support top management committees in {{role_summary}}" in template.text
-    assert template.gaps == load_profile(CANDIDATE_DIR).template_for(
-        "AI Engineer", "English"
-    ).gaps - {"github"}
-    assert profile.missing_templates == {}
+    assert template.gaps == example_profile.template_for("AI Engineer", "English").gaps - {"github"}
+    assert example_profile.missing_templates == {}
 
 
-def test_each_letter_template_has_its_not_stated_wording():
-    profile = load_profile(CANDIDATE_DIR)
-
+def test_each_letter_template_has_its_not_stated_wording(example_profile):
     for role in ["AI Engineer", "Grant Management Specialist"]:
         for language in ["English", "German"]:
-            template = profile.template_for(role, language)
-            assert template.name in profile.not_stated_wording
+            template = example_profile.template_for(role, language)
+            assert template.name in example_profile.not_stated_wording
 
 
 def test_missing_template_is_reported_not_fatal(tmp_path):
@@ -168,15 +166,13 @@ def test_profile_must_map_every_target_role_in_both_languages(tmp_path):
         load_profile(candidate_dir)
 
 
-def test_german_letter_templates_are_german_with_the_english_templates_gaps():
-    profile = load_profile(CANDIDATE_DIR)
-
+def test_german_letter_templates_are_german_with_the_english_templates_gaps(example_profile):
     for role, name in [("AI Engineer", "ai_de"), ("Grant Management Specialist", "grant_de")]:
-        german = profile.template_for(role, "German")
+        german = example_profile.template_for(role, "German")
         assert german.name == name
         assert german.language == "German"
         assert "Mit freundlichen Grüßen" in german.text
-        assert german.gaps == profile.template_for(role, "English").gaps
+        assert german.gaps == example_profile.template_for(role, "English").gaps
 
 
 def test_misspelled_language_is_rejected_by_name(tmp_path):

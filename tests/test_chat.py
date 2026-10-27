@@ -10,6 +10,7 @@ from pypdf import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
+from tests.candidate_fixture import write_example_candidate_dir
 from tests.kaggle_fixture import posting, write_kaggle_dataset
 from turing_projects_v2.agent.agent import TOOL_CALL_CAP_ANSWER
 from turing_projects_v2.agent.chat import (
@@ -32,7 +33,6 @@ from turing_projects_v2.agent.chat import (
     UsageEvent,
 )
 from turing_projects_v2.agent.memory import open_checkpointer
-from turing_projects_v2.config import PROJECT_ROOT
 from turing_projects_v2.cover_letter import LetterGaps
 from turing_projects_v2.documents import letter_docx, letter_layout, letter_pdf
 from turing_projects_v2.errors import ExternalAPIError
@@ -116,7 +116,7 @@ def chat_with(
     profile_changes=None,
     **options,
 ):
-    profile = load_profile(PROJECT_ROOT / "candidate").model_copy(
+    profile = load_profile(write_example_candidate_dir(tmp_path / "candidate")).model_copy(
         update={
             "name": "Ada Example",
             "street": "Main Street 1",
@@ -1352,7 +1352,7 @@ def test_english_ad_gets_the_english_template_of_the_job_facts_target_role(tmp_p
 def test_missing_german_letter_template_names_the_file_to_add(tmp_path, store):
     job_id = pasted_job_posting_id(tmp_path, store)
     llm = FakeChatModel(responses=[call("write_cover_letter", {"job_id": job_id}), "Sorry."])
-    profile = load_profile(PROJECT_ROOT / "candidate")
+    profile = load_profile(write_example_candidate_dir(tmp_path / "candidate"))
     without_german = {
         name: template
         for name, template in profile.letter_templates.items()
