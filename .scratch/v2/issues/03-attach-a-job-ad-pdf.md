@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] The chat input accepts a PDF attachment
-- [ ] The PDF's text is extracted (new PDF text dependency) and handled as an attached job ad, with the same limits, checks and duplicate detection as pasted text
-- [ ] A PDF without extractable text (e.g. a scan) gives a clear message asking the candidate to paste the text; nothing is stored
-- [ ] A file that is not a PDF is refused with a clear message
-- [ ] Tests build small PDFs in the test (text and image-only); full suite and ruff green
+- [x] The chat input accepts a PDF attachment
+- [x] The PDF's text is extracted (new PDF text dependency) and handled as an attached job ad, with the same limits, checks and duplicate detection as pasted text
+- [x] A PDF without extractable text (e.g. a scan) gives a clear message asking the candidate to paste the text; nothing is stored
+- [x] A file that is not a PDF is refused with a clear message
+- [x] Tests build small PDFs in the test (text and image-only); full suite and ruff green

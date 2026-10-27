@@ -48,13 +48,24 @@ with st.expander("Paste a job ad", icon=":material/content_paste:"):
     )
 
 job_ad = state.pop("pending_job_ad", None)
-question = st.chat_input("Ask about jobs, e.g. remote AI engineer roles in Texas")
-if job_ad is not None:
-    question = PASTED_AD_MESSAGE
+# A job ad PDF is attached in the chat input itself; its text is read when it is sent.
+prompt = st.chat_input(
+    "Ask about jobs, e.g. remote AI engineer roles in Texas",
+    accept_file=True,
+    file_type="pdf",
+)
+attached = prompt.files[0] if prompt and prompt.files else None
+if attached is not None:
+    job_ad = attached.getvalue()
+question = (prompt.text if prompt else "") or (PASTED_AD_MESSAGE if job_ad is not None else "")
 if question:
-    state.messages.append({"role": "user", "text": question})
+    # The candidate sees the attached file's name under the question; the agent gets its text.
+    shown = question
+    if attached is not None:
+        shown += f"\n\n:material/attach_file: {attached.name}"
+    state.messages.append({"role": "user", "text": shown})
     with st.chat_message("user"):
-        st.markdown(question)
+        st.markdown(shown)
     with st.chat_message("assistant"):
         try:
             service = chat_service()

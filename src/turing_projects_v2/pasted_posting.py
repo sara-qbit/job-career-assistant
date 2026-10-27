@@ -1,15 +1,17 @@
 """Pasted Job Postings: a job ad the candidate pastes is checked to be a job ad and stored.
 
 The ad text is stored unchanged. Position and employer are taken from the LLM's answer only
-when they appear word for word in the ad.
+when they appear word for word in the ad. An ad attached as a PDF is stored as its text.
 """
 
+import io
 import re
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
+from pypdf import PdfReader
 
 from turing_projects_v2.errors import UserInputError
 from turing_projects_v2.llm import ask_structured
@@ -31,6 +33,30 @@ class JobAdCheck(BaseModel):
 
 class NotAJobAdError(UserInputError):
     """The pasted text is not a job ad; nothing was stored."""
+
+
+def job_ad_pdf_text(pdf: bytes) -> str:
+    """The text of the job ad PDF `pdf`, page by page.
+
+    Raises UserInputError if the file is not a PDF or has no readable text (e.g. a scan).
+    """
+    if not pdf.startswith(b"%PDF-"):
+        raise UserInputError(
+            "The attached file is not a PDF. Please attach the job ad as a PDF or paste its text."
+        )
+    try:
+        pages = PdfReader(io.BytesIO(pdf)).pages
+        text = "\n".join(page.extract_text() for page in pages).strip()
+    except Exception as error:  # pypdf raises many kinds of errors for a broken file
+        raise UserInputError(
+            "The attached PDF could not be read. Please paste the text of the job ad instead."
+        ) from error
+    if not text:
+        raise UserInputError(
+            "The attached PDF has no readable text (it may be a scan). Please paste the text "
+            "of the job ad instead."
+        )
+    return text
 
 
 def store_job_ad(

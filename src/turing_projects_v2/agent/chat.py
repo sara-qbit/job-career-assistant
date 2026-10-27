@@ -22,11 +22,11 @@ from pydantic import BaseModel, Field, computed_field
 from turing_projects_v2.agent.agent import TOOL_CALL_CAP_RESULT, build_agent
 from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.config import Settings
-from turing_projects_v2.errors import AppError, ExternalAPIError
+from turing_projects_v2.errors import AppError, ExternalAPIError, UserInputError
 from turing_projects_v2.job_facts import create_job_facts, facts_text
 from turing_projects_v2.judge import Judge, open_judge
 from turing_projects_v2.llm import chat_model
-from turing_projects_v2.pasted_posting import NotAJobAdError, store_job_ad
+from turing_projects_v2.pasted_posting import NotAJobAdError, job_ad_pdf_text, store_job_ad
 from turing_projects_v2.profile import CandidateProfile, load_profile
 from turing_projects_v2.rag.embeddings import load_embedder
 from turing_projects_v2.rag.indexer import KnowledgeBase, open_collection
@@ -287,22 +287,28 @@ class ChatService:
         message: str,
         search: SearchSettings | None = None,
         *,
-        job_ad: str | None = None,
+        job_ad: str | bytes | None = None,
     ) -> Iterator[AnswerEvent]:
         """Run one turn of the Conversation; never raises for expected failures.
 
         `search` is the embedding model and reranker choice for this turn's searches.
 
-        `job_ad` is the text of a job ad attached to the message (which may then be empty). It
-        has its own length limit, is stored as a pasted Job Posting that becomes the current
-        job, and reaches the agent only inside a data block. Its Job Facts are yielded without
-        being asked for.
+        `job_ad` is the text or the PDF file of a job ad attached to the message (which may then
+        be empty). A PDF is read as its text. The ad has its own length limit, is stored as a
+        pasted Job Posting that becomes the current job, and reaches the agent only inside a
+        data block. Its Job Facts are yielded without being asked for.
 
         Token usage of every LLM call (also those inside tools) is recorded in the store and
         yielded as a UsageEvent.
         """
         if job_ad is not None and not message.strip():
             message = PASTED_AD_MESSAGE
+        if isinstance(job_ad, bytes):
+            try:
+                job_ad = job_ad_pdf_text(job_ad)
+            except UserInputError as error:
+                yield ErrorEvent(message=error.user_message)
+                return
         problem = input_problem(message)
         if problem is not None:
             yield self._security_event(conversation_id, "rejected_input", problem, message)

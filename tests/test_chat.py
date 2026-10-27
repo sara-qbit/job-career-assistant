@@ -1,3 +1,4 @@
+import io
 import time
 from datetime import date
 
@@ -5,6 +6,8 @@ import httpx
 import openai
 import pytest
 from langchain_core.messages import AIMessage
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 from tests.kaggle_fixture import posting, write_kaggle_dataset
 from turing_projects_v2.agent.agent import TOOL_CALL_CAP_ANSWER
@@ -1008,3 +1011,99 @@ def test_job_facts_missing_for_a_pasted_posting_are_created_when_changed(tmp_pat
     (card,) = of_kind(list(service.send("c1", "write it in English")), JobFactsEvent)
 
     assert (card.facts.employer, card.facts.language) == ("Universität Beispielstadt", "English")
+
+
+def text_pdf(text):
+    """A small PDF with `text` on its pages, one line per text line."""
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    lines = pdf.beginText(40, 800)
+    for number, line in enumerate(text.splitlines(), start=1):
+        lines.textLine(line)
+        if number % 60 == 0:
+            pdf.drawText(lines)
+            pdf.showPage()
+            lines = pdf.beginText(40, 800)
+    pdf.drawText(lines)
+    pdf.save()
+    return buffer.getvalue()
+
+
+def image_only_pdf():
+    """A PDF whose only page holds drawings and no text, like a scanned ad."""
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    pdf.setFillColorRGB(0.5, 0.5, 0.5)
+    for row in range(20):
+        pdf.rect(40, 780 - row * 20, 400 - row * 7, 8, stroke=0, fill=1)
+    pdf.save()
+    return buffer.getvalue()
+
+
+def test_attached_job_ad_pdf_is_stored_like_pasted_text(tmp_path, store):
+    service = chat(tmp_path, store, [ad_check(), proposed_facts(), "Got it."])
+
+    events = list(service.send("c1", "", job_ad=text_pdf(JOB_AD)))
+
+    (pasted,) = of_kind(events, PastedPostingEvent)
+    posting = store.get_posting(pasted.job_id)
+    assert posting.source == "pasted"
+    assert "Wissenschaftliche Mitarbeiterin" in posting.description
+    assert "Universität Beispielstadt" in posting.description
+    assert of_kind(events, JobFactsEvent)
+    assert service.conversation("c1").current_job_id == pasted.job_id
+    assert answer_text(events) == "Got it."
+
+
+def test_attaching_the_same_pdf_again_reuses_its_job_posting(tmp_path, store):
+    service = chat(tmp_path, store, [ad_check(), proposed_facts(), "Got it.", "Same job."])
+
+    (first,) = of_kind(list(service.send("c1", "", job_ad=text_pdf(JOB_AD))), PastedPostingEvent)
+    (second,) = of_kind(list(service.send("c2", "", job_ad=text_pdf(JOB_AD))), PastedPostingEvent)
+
+    assert second.job_id == first.job_id
+    assert second.reused
+
+
+def test_attached_pdf_has_the_job_ad_length_limit(tmp_path, store):
+    service = chat(tmp_path, store, [])
+
+    events = list(service.send("c1", "", job_ad=text_pdf(("Stelle " * 12 + "\n") * 400)))
+
+    (refused,) = of_kind(events, SecurityEvent)
+    assert refused.event_type == "rejected_input"
+    assert "30,000" in refused.message
+    assert service.conversations() == []
+
+
+def test_pdf_without_readable_text_asks_for_pasted_text_and_stores_nothing(tmp_path, store):
+    service = chat(tmp_path, store, [])
+
+    events = list(service.send("c1", "", job_ad=image_only_pdf()))
+
+    (error,) = of_kind(events, ErrorEvent)
+    assert "no readable text" in error.message
+    assert "paste" in error.message
+    assert not of_kind(events, PastedPostingEvent)
+    assert service.conversations() == []
+
+
+def test_file_that_is_not_a_pdf_is_refused(tmp_path, store):
+    service = chat(tmp_path, store, [])
+
+    events = list(service.send("c1", "", job_ad=JOB_AD.encode()))
+
+    (error,) = of_kind(events, ErrorEvent)
+    assert "not a PDF" in error.message
+    assert not of_kind(events, PastedPostingEvent)
+    assert service.conversations() == []
+
+
+def test_broken_pdf_asks_for_pasted_text_and_stores_nothing(tmp_path, store):
+    service = chat(tmp_path, store, [])
+
+    events = list(service.send("c1", "", job_ad=text_pdf(JOB_AD)[:400]))
+
+    (error,) = of_kind(events, ErrorEvent)
+    assert "paste" in error.message
+    assert service.conversations() == []
