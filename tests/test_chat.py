@@ -12,6 +12,7 @@ from reportlab.pdfgen import canvas
 from tests.kaggle_fixture import posting, write_kaggle_dataset
 from turing_projects_v2.agent.agent import TOOL_CALL_CAP_ANSWER
 from turing_projects_v2.agent.chat import (
+    ApplicationTableEvent,
     ChatService,
     CitationsEvent,
     CoverLetterEvent,
@@ -1214,3 +1215,47 @@ def test_system_prompt_says_to_record_an_application_only_when_asked(tmp_path, s
     system = llm.calls[0][0].text
     assert "Record an Application only when the candidate says they applied or asks to" in system
     assert "Kaggle Job Postings cannot be saved as Applications" in system
+
+
+def test_applications_pdf_shows_every_application_oldest_first(tmp_path, store):
+    first = pasted_job_posting_id(tmp_path, store)
+    service = chat(tmp_path, store, [ad_check(), proposed_facts(), "Got it."])
+    other_ad = JOB_AD + "\nZweite Ausschreibung.\n"
+    (pasted,) = of_kind(list(service.send("c2", "", job_ad=other_ad)), PastedPostingEvent)
+    removed = store.add_pasted_posting(JOB_AD + "\nDritte.\n", "Dritte Stelle", None).job_id
+    store.add_application(Application(job_id=first, applied_on=date(2026, 10, 20)))
+    store.add_application(Application(job_id=pasted.job_id, applied_on=date(2026, 10, 1)))
+    store.add_application(Application(job_id=removed, applied_on=date(2026, 10, 5)))
+    store.remove_application(removed)
+    service = chat(tmp_path, store, [call("application_table", {}), "Here it is."])
+
+    events = list(service.send("c3", "give me the applications PDF"))
+
+    (result,) = of_kind(events, ToolResultEvent)
+    (card,) = of_kind(events, ApplicationTableEvent)
+    table = card.table
+    assert (table.candidate_name, table.made_at.date()) == ("Ada Example", date.today())
+    assert [row.applied_on for row in table.rows] == [date(2026, 10, 1), date(2026, 10, 20)]
+    older, newer = table.rows
+    assert (older.employer, older.city, older.employment) == (
+        "Universität Beispielstadt",
+        "Beispielstadt",
+        "Vollzeit",
+    )
+    assert older.work_mode == "nicht angegeben"  # "vor Ort in Beispielstadt" is not in this ad
+    assert newer.work_mode == "Präsenz"
+    assert "2 Applications" in result.content
+    assert "Ada Example" not in result.content  # the candidate's name stays out of the LLM
+    assert answer_text(events) == "Here it is."
+
+
+def test_applications_pdf_without_applications_is_explained_and_not_made(tmp_path, store):
+    pasted_job_posting_id(tmp_path, store)
+    service = chat(tmp_path, store, [call("application_table", {}), "None yet."])
+
+    events = list(service.send("c1", "give me the applications PDF"))
+
+    (result,) = of_kind(events, ToolResultEvent)
+    assert not result.is_error
+    assert "no Applications yet" in result.content
+    assert not of_kind(events, ApplicationTableEvent)

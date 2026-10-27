@@ -1,9 +1,12 @@
 import io
+from datetime import date, datetime
 
 import docx
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from pypdf import PdfReader
 
-from turing_projects_v2.documents import letter_docx, letter_pdf
+from turing_projects_v2.applications import ApplicationRow, ApplicationTable
+from turing_projects_v2.documents import application_table_pdf, letter_docx, letter_pdf
 
 LETTER = (
     "Ada Example\n"
@@ -76,3 +79,53 @@ def test_docx_lays_the_letter_out_as_a_german_business_letter():
     bullet = paragraphs["AI agents"]
     assert bullet.style.name == "List Bullet"
     assert texts[-2:] == ["Yours sincerely,", "Ada Example"]
+
+
+def pdf_text(pdf):
+    return "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
+
+
+def application_row(day, employer, **changes):
+    row = {
+        "applied_on": day,
+        "employer": employer,
+        "position": "Wissenschaftliche Mitarbeiterin (m/w/d)",
+        "city": "Beispielstadt",
+        "employment": "Vollzeit",
+        "work_mode": "Präsenz",
+    }
+    return ApplicationRow(**(row | changes))
+
+
+LONG_EMPLOYER = "Größere Forschungsgesellschaft für angewandte Künstliche Intelligenz mbH"
+
+
+def test_application_table_pdf_is_a_german_table_of_the_applications_in_order():
+    table = ApplicationTable(
+        candidate_name="Ada Example",
+        made_at=datetime(2026, 11, 30, 9, 15),
+        rows=[
+            application_row(date(2026, 11, 2), "Universität Beispielstadt"),
+            application_row(
+                date(2026, 11, 28),
+                LONG_EMPLOYER,
+                city="nicht angegeben",
+                employment="Teilzeit",
+                work_mode="nicht angegeben",
+            ),
+        ],
+    )
+
+    text = pdf_text(application_table_pdf(table))
+
+    assert text.startswith("Bewerbungen\nAda Example\nStand: 30.11.2026")
+    header = "Datum Arbeitgeber Stelle Ort Vollzeit/Teilzeit Präsenz/Online"
+    assert header in " ".join(text.split())
+    first, second = text.index("02.11.2026"), text.index("28.11.2026")
+    assert text.index("Datum") < first < second
+    assert "Universität Beispielstadt" in text[first:second]
+    assert "Teilzeit" in text[second:]
+    assert text[second:].count("nicht angegeben") == 2
+    # A long employer wraps inside its cell instead of running off the page.
+    assert not any(LONG_EMPLOYER in line for line in text.splitlines())
+    assert "Größere" in text[second:] and "mbH" in text[second:]

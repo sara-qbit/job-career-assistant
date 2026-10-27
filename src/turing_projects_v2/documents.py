@@ -5,6 +5,8 @@ a bold subject line, then the body justified with 1.5 line spacing.
 The layout is read from the letter text, whose blocks are separated by blank lines: sender,
 recipient, place and date, subject, body. A letter without those blocks (saved before the
 layout existed) is written line by line.
+
+Also the Application Table download, Bewerbungen.pdf: one coloured German table for the Berater.
 """
 
 import io
@@ -14,11 +16,14 @@ import docx
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
 from pydantic import BaseModel
+from reportlab.lib import colors
 from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_RIGHT
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+from turing_projects_v2.applications import TABLE_COLUMNS, ApplicationTable, german_date
 
 FONT_SIZE = 11
 LINE_SPACING = 1.5
@@ -36,6 +41,12 @@ GAPS = {
     "closing": 12,
     "signature": 26,
 }
+
+# The widths (cm) of the Application Table's columns, filling a landscape A4 page.
+TABLE_COLUMN_WIDTHS = [2.4, 6.0, 7.0, 3.5, 3.4, 3.4]
+TABLE_HEADER_COLOUR = colors.HexColor("#1F4E79")
+TABLE_STRIPE_COLOUR = colors.HexColor("#DDEBF7")
+TABLE_LINE_COLOUR = colors.HexColor("#9DC3E6")
 
 
 class LetterLayout(BaseModel):
@@ -147,11 +158,55 @@ def letter_pdf(text: str) -> bytes:
     return buffer.getvalue()
 
 
+def application_table_pdf(table: ApplicationTable) -> bytes:
+    """The Application Table as a landscape A4 PDF in Helvetica: title, candidate name and date
+    made above a coloured table with one row per Application. Long values wrap in their cell;
+    the header row repeats on every page."""
+    title = _style("table-title", fontName="Helvetica-Bold", fontSize=18, leading=22)
+    line = _style("table-line")
+    header = _style("table-header", fontName="Helvetica-Bold", fontSize=10, textColor=colors.white)
+    cell = _style("table-cell", fontSize=10, leading=12)
+    rows = [[Paragraph(name, header) for name in TABLE_COLUMNS]]
+    rows += [[Paragraph(escape(value), cell) for value in row.cells()] for row in table.rows]
+    grid = Table(rows, colWidths=[width * cm for width in TABLE_COLUMN_WIDTHS], repeatRows=1)
+    grid.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), TABLE_HEADER_COLOUR),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, TABLE_STRIPE_COLOUR]),
+                ("LINEBELOW", (0, 0), (-1, -1), 0.5, TABLE_LINE_COLOUR),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    flowables = [
+        Paragraph("Bewerbungen", title),
+        Paragraph(escape(table.candidate_name), line),
+        Paragraph(f"Stand: {german_date(table.made_at.date())}", line),
+        Spacer(0, 14),
+        grid,
+    ]
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=2 * cm,
+        rightMargin=2 * cm,
+        topMargin=1.7 * cm,
+        bottomMargin=1.5 * cm,
+        title="Bewerbungen",
+    )
+    document.build(flowables)
+    return buffer.getvalue()
+
+
 def _style(name: str, alignment: int = TA_LEFT, **options) -> ParagraphStyle:
     return ParagraphStyle(
         name,
         fontName=options.pop("fontName", "Helvetica"),
-        fontSize=FONT_SIZE,
+        fontSize=options.pop("fontSize", FONT_SIZE),
         leading=options.pop("leading", FONT_SIZE * 1.2),
         alignment=alignment,
         **options,

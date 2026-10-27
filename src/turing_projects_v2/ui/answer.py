@@ -11,6 +11,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from turing_projects_v2.agent.chat import (
     AnswerEvent,
+    ApplicationTableEvent,
     CitationsEvent,
     CoverLetterEvent,
     ErrorEvent,
@@ -26,7 +27,8 @@ from turing_projects_v2.agent.chat import (
     ToolResultEvent,
     UsageEvent,
 )
-from turing_projects_v2.documents import letter_docx, letter_pdf
+from turing_projects_v2.applications import TABLE_COLUMNS, ApplicationTable, german_date
+from turing_projects_v2.documents import application_table_pdf, letter_docx, letter_pdf
 from turing_projects_v2.job_info import NOT_STATED
 from turing_projects_v2.judge import Verdict
 from turing_projects_v2.rag.retriever import SearchResult
@@ -34,6 +36,9 @@ from turing_projects_v2.store import CoverLetter, JobFacts, JobInfo, TokenUsage,
 from turing_projects_v2.tools.stats import MarketStats
 
 CITATION = re.compile(r"\[(\d+)\](?!\()")
+
+PREVIEW_ROWS = 5
+"""Rows of the Application Table shown in the chat; the PDF has them all."""
 
 
 def link_citations(text: str, citations: dict[int, SearchResult]) -> str:
@@ -135,6 +140,29 @@ def show_cover_letter(letter: CoverLetter) -> None:
             file_name=f"{name}.pdf",
             mime="application/pdf",
             key=f"{name}-pdf",
+            icon=":material/picture_as_pdf:",
+        )
+
+
+def show_application_table(table: ApplicationTable) -> None:
+    """The Application Table box: a preview of its rows and the Bewerbungen.pdf download."""
+    with st.container(border=True):
+        st.markdown(f"**Bewerbungen** (Stand: {german_date(table.made_at.date())})")
+        rows = [row.cells() for row in table.rows[-PREVIEW_ROWS:]]
+        st.dataframe(pd.DataFrame(rows, columns=TABLE_COLUMNS), hide_index=True)
+        count = len(table.rows)
+        shown = f"the newest {len(rows)} of " if len(rows) < count else ""
+        st.caption(
+            f"Preview: {shown}{count} Application{'s' if count > 1 else ''}. The PDF lists them "
+            "all, oldest first, for the Berater."
+        )
+        stamp = table.made_at.strftime("%Y%m%d-%H%M%S")
+        st.download_button(
+            "Download PDF",
+            application_table_pdf(table),
+            file_name="Bewerbungen.pdf",
+            mime="application/pdf",
+            key=f"bewerbungen-{stamp}",
             icon=":material/picture_as_pdf:",
         )
 
@@ -253,6 +281,9 @@ class AnswerView:
             case CoverLetterEvent(letter=letter):
                 self._text_area = None
                 show_cover_letter(letter)
+            case ApplicationTableEvent(table=table):
+                self._text_area = None
+                show_application_table(table)
             case SecurityEvent(event_type="rejected_input", message=message):
                 self._text_area = None
                 st.error(message, icon=":material/block:")

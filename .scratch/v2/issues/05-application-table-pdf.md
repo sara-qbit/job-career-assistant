@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] The PDF is titled "Bewerbungen", shows the candidate's name and "Stand: <today as DD.MM.YYYY>"
-- [ ] Columns: Datum, Arbeitgeber, Stelle, Ort, Vollzeit/Teilzeit, Präsenz/Online, filled from the Application date and the Job Facts
-- [ ] One row per Application, oldest first; dates as DD.MM.YYYY; unknown facts as "nicht angegeben"
-- [ ] The table is colourful and readable (header colour, alternating rows); long values wrap
-- [ ] The download file is named `Bewerbungen.pdf`
-- [ ] With no Applications, the assistant says so and makes no PDF
-- [ ] Removed Applications do not appear
-- [ ] Tests: through the chat service for the event, and on the PDF builder for title, columns, row order and German text; full suite and ruff green
+- [x] The PDF is titled "Bewerbungen", shows the candidate's name and "Stand: <today as DD.MM.YYYY>"
+- [x] Columns: Datum, Arbeitgeber, Stelle, Ort, Vollzeit/Teilzeit, Präsenz/Online, filled from the Application date and the Job Facts
+- [x] One row per Application, oldest first; dates as DD.MM.YYYY; unknown facts as "nicht angegeben"
+- [x] The table is colourful and readable (header colour, alternating rows); long values wrap
+- [x] The download file is named `Bewerbungen.pdf`
+- [x] With no Applications, the assistant says so and makes no PDF
+- [x] Removed Applications do not appear
+- [x] Tests: through the chat service for the event, and on the PDF builder for title, columns, row order and German text; full suite and ruff green

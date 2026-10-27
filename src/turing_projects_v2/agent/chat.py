@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, computed_field
 
 from turing_projects_v2.agent.agent import TOOL_CALL_CAP_RESULT, build_agent
 from turing_projects_v2.agent.memory import open_checkpointer
+from turing_projects_v2.applications import ApplicationTable
 from turing_projects_v2.config import Settings
 from turing_projects_v2.errors import AppError, ExternalAPIError, UserInputError
 from turing_projects_v2.job_facts import create_job_facts, facts_text
@@ -68,6 +69,7 @@ TOOL_STATUS = {
     "change_job_facts": "Changing the Job Facts",
     "record_application": "Saving the Application",
     "remove_application": "Removing the Application",
+    "application_table": "Making the Application Table",
     "job_market_stats": "Computing job market statistics",
 }
 
@@ -155,6 +157,13 @@ class CoverLetterEvent(BaseModel):
     letter: CoverLetter
 
 
+class ApplicationTableEvent(BaseModel):
+    """The Application Table, shown as a preview with a Bewerbungen.pdf download."""
+
+    kind: Literal["application_table"] = "application_table"
+    table: ApplicationTable
+
+
 class MarketStatsEvent(BaseModel):
     kind: Literal["market_stats"] = "market_stats"
     stats: MarketStats
@@ -191,6 +200,7 @@ type AnswerEvent = Annotated[
     | JobDescriptionEvent
     | JobInfoEvent
     | CoverLetterEvent
+    | ApplicationTableEvent
     | MarketStatsEvent
     | SecurityEvent
     | UsageEvent
@@ -205,6 +215,7 @@ TOOL_CARD_EVENTS = (
     JobDescriptionEvent,
     JobInfoEvent,
     CoverLetterEvent,
+    ApplicationTableEvent,
     MarketStatsEvent,
 )
 """Events that show a tool's artifact; each directly follows its ToolResultEvent."""
@@ -593,6 +604,8 @@ def _update_events(message: Any) -> Iterator[AnswerEvent]:
             yield JobFactsEvent(facts=JobFacts.model_validate(message.artifact))
         elif message.name == "write_cover_letter":
             yield CoverLetterEvent(letter=CoverLetter.model_validate(message.artifact))
+        elif message.name == "application_table":
+            yield ApplicationTableEvent(table=ApplicationTable.model_validate(message.artifact))
         elif message.name == "job_market_stats":
             yield MarketStatsEvent(stats=MarketStats.model_validate(message.artifact))
 

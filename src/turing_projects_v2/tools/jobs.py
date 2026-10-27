@@ -1,12 +1,13 @@
 """The job tools: `search_jobs` (the Retriever), `get_job_description` (verbatim, no LLM),
 `create_job_info` (summaries checked by the judge), `write_cover_letter`, `change_job_facts`
 (the candidate's Target Role and language for a pasted Job Posting), and `record_application` and
-`remove_application` (the pasted Job Postings the candidate applied for).
+`remove_application` (the pasted Job Postings the candidate applied for), and `application_table`
+(the Application Table for the Berater).
 
 Each tool returns a short text for the LLM, most of them plus an artifact (a JSON-ready dict) that
-the Chat service turns into answer events; the Application tools return text only. Expected
-failures raise AppError subclasses; the agent hands their user message back to the LLM as the
-tool result.
+the Chat service turns into answer events; recording and removing an Application return text
+only. Expected failures raise AppError subclasses; the agent hands their user message back to the
+LLM as the tool result.
 """
 
 from collections.abc import Callable
@@ -212,6 +213,30 @@ def job_tools(
             "stored."
         )
 
+    @tool(response_format="content_and_artifact")
+    def application_table() -> tuple[str, dict | None]:
+        """Show the candidate the Application Table: every Application so far as a German table,
+        with a preview and a download button for Bewerbungen.pdf. Use it when the candidate asks
+        for the Applications PDF or their list of applications."""
+        table = applications.application_table(profile.name, store)
+        if not table.rows:
+            return (
+                "The candidate has no Applications yet, so no PDF was made. Tell them to say "
+                '"save it" or "I applied" after pasting a job ad.'
+            ), None
+        # The table carries the candidate's name, so only its rows reach the LLM.
+        lines = [
+            f"The Application Table with {len(table.rows)} Applications is now shown to the "
+            "candidate with a preview and a download button for Bewerbungen.pdf; do not repeat it.",
+            "<applications_data>",
+            *(
+                f"{applications.german_date(row.applied_on)}: {row.position} at {row.employer}"
+                for row in table.rows
+            ),
+            "</applications_data>",
+        ]
+        return "\n".join(lines), table.model_dump(mode="json")
+
     return [
         search_jobs,
         get_job_description,
@@ -220,4 +245,5 @@ def job_tools(
         change_job_facts,
         record_application,
         remove_application,
+        application_table,
     ]
