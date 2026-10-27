@@ -2,7 +2,7 @@
 
 **What to build:** v2 is finished and documented: the README describes pasting jobs, Job Facts, German Cover Letters, Applications and `Bewerbungen.pdf`; the version is 2.0.0 and the sidebar shows v2.0.
 
-**Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08
+**Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 10
 
 **Status:** ready-for-agent
 
