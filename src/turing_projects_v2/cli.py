@@ -35,9 +35,10 @@ def check(settings: Settings) -> None:
     profile = load_profile(settings.candidate_dir)
     print(f"Settings OK (agent model: {settings.agent_model}, judge: {settings.judge_model}).")
     print(f"Candidate Profile OK for {profile.name}.")
-    for role, template in profile.target_roles.items():
-        missing = " is MISSING" if role in profile.missing_templates else ""
-        print(f"  {role}: Letter Template '{template}'{missing}")
+    for role, templates in profile.target_roles.items():
+        for language, template in templates.items():
+            missing = " is MISSING" if (role, language) in profile.missing_templates else ""
+            print(f"  {role} ({language}): Letter Template '{template}'{missing}")
 
 
 def import_data(settings: Settings) -> None:

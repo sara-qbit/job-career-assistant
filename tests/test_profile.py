@@ -19,10 +19,10 @@ email = "ada@example.com"
 github = "https://github.com/ada"
 
 [target_roles]
-"AI Engineer" = "ai"
-"AI Innovation Manager" = "ai"
-"Quantum Software Developer" = "ai"
-"Grant Management Specialist" = "grant"
+"AI Engineer" = { English = "ai", German = "ai_de" }
+"AI Innovation Manager" = { English = "ai", German = "ai_de" }
+"Quantum Software Developer" = { English = "ai", German = "ai_de" }
+"Grant Management Specialist" = { English = "grant", German = "grant_de" }
 """
 
 
@@ -52,13 +52,13 @@ def test_ai_roles_use_the_ai_letter_template():
     profile = load_profile(CANDIDATE_DIR)
 
     for role in ["AI Engineer", "AI Innovation Manager", "Quantum Software Developer"]:
-        template = profile.template_for(role)
+        template = profile.template_for(role, "English")
         assert template.name == "ai"
         assert "I am currently transitioning my career towards AI engineering" in template.text
 
 
 def test_ai_letter_template_marks_its_gaps():
-    template = load_profile(CANDIDATE_DIR).template_for("AI Engineer")
+    template = load_profile(CANDIDATE_DIR).template_for("AI Engineer", "English")
 
     assert template.gaps == {
         "candidate_name",
@@ -82,13 +82,13 @@ def test_ai_letter_template_marks_its_gaps():
 def test_grant_management_uses_the_grant_letter_template_with_the_same_gaps():
     profile = load_profile(CANDIDATE_DIR)
 
-    template = profile.template_for("Grant Management Specialist")
+    template = profile.template_for("Grant Management Specialist", "English")
 
     assert template.name == "grant"
     assert "support top management committees in {{role_summary}}" in template.text
-    assert template.gaps == load_profile(CANDIDATE_DIR).template_for("AI Engineer").gaps - {
-        "github"
-    }
+    assert template.gaps == load_profile(CANDIDATE_DIR).template_for(
+        "AI Engineer", "English"
+    ).gaps - {"github"}
     assert profile.missing_templates == {}
 
 
@@ -96,23 +96,28 @@ def test_each_letter_template_has_its_not_stated_wording():
     profile = load_profile(CANDIDATE_DIR)
 
     for role in ["AI Engineer", "Grant Management Specialist"]:
-        template = profile.template_for(role)
-        assert template.name in profile.not_stated_wording
+        for language in ["English", "German"]:
+            template = profile.template_for(role, language)
+            assert template.name in profile.not_stated_wording
 
 
 def test_missing_template_is_reported_not_fatal(tmp_path):
-    profile = load_profile(write_candidate_dir(tmp_path, PROFILE_TOML, {"ai": "Hi {{job_name}}"}))
+    templates = {"ai": "Hi {{job_name}}", "ai_de": "Hallo {{job_name}}", "grant": "Hi"}
+    profile = load_profile(write_candidate_dir(tmp_path, PROFILE_TOML, templates))
 
-    assert profile.missing_templates == {"Grant Management Specialist": "grant"}
-    with pytest.raises(ConfigError, match=r"Grant Management Specialist.*grant\.txt"):
-        profile.template_for("Grant Management Specialist")
+    assert profile.missing_templates == {("Grant Management Specialist", "German"): "grant_de"}
+    with pytest.raises(
+        ConfigError, match=r"No German Letter Template .*Grant Management Specialist.*grant_de\.txt"
+    ):
+        profile.template_for("Grant Management Specialist", "German")
+    assert profile.template_for("Grant Management Specialist", "English").name == "grant"
 
 
 def test_unknown_target_role_is_rejected(tmp_path):
     profile = load_profile(write_candidate_dir(tmp_path, PROFILE_TOML, {"ai": "Hi {{job_name}}"}))
 
     with pytest.raises(ConfigError, match="Chef"):
-        profile.template_for("Chef")
+        profile.template_for("Chef", "English")
 
 
 def test_template_with_an_unknown_gap_is_rejected(tmp_path):
@@ -136,7 +141,9 @@ def test_missing_profile_file_is_a_config_error(tmp_path):
 
 
 def test_profile_must_map_every_target_role(tmp_path):
-    profile_without_grant = PROFILE_TOML.replace('"Grant Management Specialist" = "grant"\n', "")
+    profile_without_grant = PROFILE_TOML.replace(
+        '"Grant Management Specialist" = { English = "grant", German = "grant_de" }\n', ""
+    )
     candidate_dir = write_candidate_dir(tmp_path, profile_without_grant, {"ai": "Hi"})
 
     with pytest.raises(DataValidationError, match="Grant Management Specialist"):
@@ -148,4 +155,31 @@ def test_not_stated_wording_for_an_unknown_template_is_rejected(tmp_path):
     candidate_dir = write_candidate_dir(tmp_path, profile, {"ai": "Hi"})
 
     with pytest.raises(DataValidationError, match="grnat"):
+        load_profile(candidate_dir)
+
+
+def test_profile_must_map_every_target_role_in_both_languages(tmp_path):
+    english_only = PROFILE_TOML.replace(', German = "grant_de"', "")
+    candidate_dir = write_candidate_dir(tmp_path, english_only, {"ai": "Hi"})
+
+    with pytest.raises(DataValidationError, match=r"Grant Management Specialist.*German"):
+        load_profile(candidate_dir)
+
+
+def test_german_letter_templates_are_german_with_the_english_templates_gaps():
+    profile = load_profile(CANDIDATE_DIR)
+
+    for role, name in [("AI Engineer", "ai_de"), ("Grant Management Specialist", "grant_de")]:
+        german = profile.template_for(role, "German")
+        assert german.name == name
+        assert german.language == "German"
+        assert "Sehr geehrte" in german.text
+        assert german.gaps == profile.template_for(role, "English").gaps
+
+
+def test_misspelled_language_is_rejected_by_name(tmp_path):
+    misspelled = PROFILE_TOML.replace('German = "grant_de"', 'Germen = "grant_de"')
+    candidate_dir = write_candidate_dir(tmp_path, misspelled, {"ai": "Hi", "grant_de": "Hallo"})
+
+    with pytest.raises(DataValidationError, match="Germen"):
         load_profile(candidate_dir)

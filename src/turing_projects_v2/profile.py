@@ -1,7 +1,8 @@
 """Candidate Profile and Letter Templates, loaded from the candidate directory.
 
 Layout of the candidate directory:
-    profile.toml          candidate details and the Target Role -> Letter Template mapping
+    profile.toml          candidate details and the Target Role -> Letter Template mapping,
+                          one template per language (English and German)
     templates/<name>.txt  Letter Templates; gaps are marked as {{gap_name}}
 """
 
@@ -24,6 +25,10 @@ type TargetRole = Literal[
 
 TARGET_ROLES: frozenset[str] = frozenset(get_args(TargetRole.__value__))
 
+type Language = Literal["German", "English"]
+
+LANGUAGES: tuple[Language, ...] = get_args(Language.__value__)
+
 GAP_PATTERN = re.compile(r"\{\{(\w+)\}\}")
 
 PROFILE_GAPS = frozenset(
@@ -42,7 +47,8 @@ JOB_GAPS = frozenset(
     {"company_name", "company_address", "job_name", "work_type", "company_vision", "role_summary"}
 )
 LETTER_GAPS = frozenset({"date"})
-"""Filled when the letter is written: the day, e.g. "25 October 2026"."""
+"""Filled when the letter is written: the day in the letter's language, e.g. "25 October 2026"
+or "25. Oktober 2026"."""
 KNOWN_GAPS = PROFILE_GAPS | JOB_GAPS | LETTER_GAPS
 
 
@@ -53,6 +59,7 @@ class LetterTemplate(BaseModel):
 
     name: str
     text: str
+    language: Language = "English"
 
     @property
     def gaps(self) -> set[str]:
@@ -68,6 +75,16 @@ class NotStatedWording(BaseModel):
     role_summary: str = "contribute to this role"
 
 
+# The wording for templates without their own entry, by template language.
+DEFAULT_WORDING: dict[Language, NotStatedWording] = {
+    "English": NotStatedWording(),
+    "German": NotStatedWording(
+        company_vision="der Verwirklichung Ihrer Unternehmensziele",
+        role_summary="zu dieser Stelle beizutragen",
+    ),
+}
+
+
 class CandidateProfile(BaseModel):
     """The facts about the candidate, supplied by the candidate."""
 
@@ -81,22 +98,35 @@ class CandidateProfile(BaseModel):
     phone: str
     email: str
     github: str
-    target_roles: dict[str, str]
+    target_roles: dict[str, dict[Language, str]]
+    """Target Role -> Letter Template name per language."""
     letter_templates: dict[str, LetterTemplate] = {}
     not_stated_wording: dict[str, NotStatedWording] = {}
     """Per Letter Template name; templates without an entry get the default wording."""
 
     @field_validator("target_roles")
     @classmethod
-    def every_target_role_is_mapped(cls, target_roles: dict[str, str]) -> dict[str, str]:
-        unmapped = TARGET_ROLES - target_roles.keys()
+    def every_target_role_is_mapped(
+        cls, target_roles: dict[str, dict[Language, str]]
+    ) -> dict[str, dict[Language, str]]:
+        unmapped = [
+            f"{role} ({language})"
+            for role in sorted(TARGET_ROLES)
+            for language in LANGUAGES
+            if language not in target_roles.get(role, {})
+        ]
         if unmapped:
-            raise ValueError(f"no Letter Template mapped for {', '.join(sorted(unmapped))}")
+            raise ValueError(f"no Letter Template mapped for {', '.join(unmapped)}")
         return target_roles
+
+    @property
+    def template_names(self) -> set[str]:
+        """The names of every Letter Template mapped, in any language."""
+        return {name for names in self.target_roles.values() for name in names.values()}
 
     @model_validator(mode="after")
     def wording_is_for_known_templates(self) -> CandidateProfile:
-        unknown = self.not_stated_wording.keys() - set(self.target_roles.values())
+        unknown = self.not_stated_wording.keys() - self.template_names
         if unknown:
             raise ValueError(
                 f"not_stated_wording for unknown templates: {', '.join(sorted(unknown))}"
@@ -104,26 +134,28 @@ class CandidateProfile(BaseModel):
         return self
 
     @property
-    def missing_templates(self) -> dict[str, str]:
-        """Target Roles whose Letter Template file does not exist yet (role -> template name)."""
+    def missing_templates(self) -> dict[tuple[str, Language], str]:
+        """The Letter Template files that do not exist yet: (role, language) -> template name."""
         return {
-            role: template
-            for role, template in self.target_roles.items()
+            (role, language): template
+            for role, templates in self.target_roles.items()
+            for language, template in templates.items()
             if template not in self.letter_templates
         }
 
     def wording_for(self, template: LetterTemplate) -> NotStatedWording:
         """The template's wording for summary gaps whose Job Info summary is not stated."""
-        return self.not_stated_wording.get(template.name, NotStatedWording())
+        return self.not_stated_wording.get(template.name, DEFAULT_WORDING[template.language])
 
-    def template_for(self, target_role: str) -> LetterTemplate:
+    def template_for(self, target_role: str, language: Language) -> LetterTemplate:
+        """The Letter Template of `target_role` in `language`."""
         if target_role not in self.target_roles:
             known = ", ".join(self.target_roles)
             raise ConfigError(f"Unknown Target Role '{target_role}'. Known roles: {known}.")
-        template_name = self.target_roles[target_role]
+        template_name = self.target_roles[target_role][language]
         if template_name not in self.letter_templates:
             raise ConfigError(
-                f"No Letter Template for Target Role '{target_role}': "
+                f"No {language} Letter Template for Target Role '{target_role}': "
                 f"add templates/{template_name}.txt to the candidate directory."
             )
         return self.letter_templates[template_name]
@@ -140,10 +172,15 @@ def load_profile(candidate_dir: Path) -> CandidateProfile:
         raise DataValidationError(f"{profile_path} is not valid TOML: {error}") from error
 
     templates = {}
-    for template_name in set(raw.get("target_roles", {}).values()):
-        template_path = candidate_dir / "templates" / f"{template_name}.txt"
-        if template_path.exists():
-            templates[template_name] = _load_template(template_name, template_path)
+    for languages in raw.get("target_roles", {}).values():
+        if not isinstance(languages, dict):
+            continue  # the validation below names the wrongly mapped role
+        for language, template_name in languages.items():
+            if language not in LANGUAGES:
+                continue  # the validation below names the unknown language
+            template_path = candidate_dir / "templates" / f"{template_name}.txt"
+            if template_path.exists():
+                templates[template_name] = _load_template(template_name, language, template_path)
 
     try:
         return CandidateProfile(**raw, letter_templates=templates)
@@ -153,8 +190,8 @@ def load_profile(candidate_dir: Path) -> CandidateProfile:
         ) from error
 
 
-def _load_template(name: str, path: Path) -> LetterTemplate:
-    template = LetterTemplate(name=name, text=path.read_text(encoding="utf-8"))
+def _load_template(name: str, language: Language, path: Path) -> LetterTemplate:
+    template = LetterTemplate(name=name, text=path.read_text(encoding="utf-8"), language=language)
     unknown = template.gaps - KNOWN_GAPS
     if unknown:
         raise DataValidationError(

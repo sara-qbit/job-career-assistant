@@ -8,12 +8,13 @@ phone = "0123 4567890"
 email = "ada@example.com"
 github = "https://github.com/sara-qbit"
 
-# Target Role -> Letter Template (file name in templates/, without .txt).
+# Target Role -> Letter Template per language (file name in templates/, without .txt).
+# A German ad gets the German template; the assistant never translates a template.
 [target_roles]
-"AI Engineer" = "ai"
-"AI Innovation Manager" = "ai"
-"Quantum Software Developer" = "ai"
-"Grant Management Specialist" = "grant"
+"AI Engineer" = { English = "ai", German = "ai_de" }
+"AI Innovation Manager" = { English = "ai", German = "ai_de" }
+"Quantum Software Developer" = { English = "ai", German = "ai_de" }
+"Grant Management Specialist" = { English = "grant", German = "grant_de" }
 
 # Per Letter Template: the words for a summary gap when the posting does not state that summary.
 # Each completes the sentence its gap ends.
@@ -24,3 +25,11 @@ role_summary = "contribute to this role"
 [not_stated_wording.grant]
 company_vision = "your organisation's field of work"
 role_summary = "fulfilling the responsibilities of this role"
+
+[not_stated_wording.ai_de]
+company_vision = "der Verwirklichung Ihrer Unternehmensziele"
+role_summary = "zu dieser Stelle beizutragen"
+
+[not_stated_wording.grant_de]
+company_vision = "der Verwirklichung Ihrer Ziele"
+role_summary = "die Aufgaben dieser Stelle zu übernehmen"

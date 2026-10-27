@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from turing_projects_v2.judge import Verdict
-from turing_projects_v2.profile import TargetRole
+from turing_projects_v2.profile import Language, TargetRole
 
 # Kaggle postings.csv columns with their SQLite types. Type affinity turns "2774458.0" into 2774458.
 POSTING_COLUMNS = {
@@ -112,7 +112,6 @@ class Company(BaseModel):
 NOT_STATED_DE = "nicht angegeben"
 """A Job Fact the ad does not state (or whose backing quote is not in the ad)."""
 
-type Language = Literal["German", "English"]
 type Employment = Literal["Vollzeit", "Teilzeit", "nicht angegeben"]
 type WorkMode = Literal["Präsenz", "Online", "Hybrid", "nicht angegeben"]
 

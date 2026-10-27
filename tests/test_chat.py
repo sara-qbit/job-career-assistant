@@ -6,6 +6,7 @@ import httpx
 import openai
 import pytest
 from langchain_core.messages import AIMessage
+from pypdf import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
@@ -33,6 +34,7 @@ from turing_projects_v2.agent.chat import (
 from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.config import PROJECT_ROOT
 from turing_projects_v2.cover_letter import LetterGaps
+from turing_projects_v2.documents import letter_docx, letter_layout, letter_pdf
 from turing_projects_v2.errors import ExternalAPIError
 from turing_projects_v2.fakes import (
     FakeChatModel,
@@ -104,7 +106,16 @@ class FakeKnowledgeBases:
         return self.knowledge_base
 
 
-def chat_with(tmp_path, store, llm, judge=None, scope_guard=None, knowledge_bases=None, **options):
+def chat_with(
+    tmp_path,
+    store,
+    llm,
+    judge=None,
+    scope_guard=None,
+    knowledge_bases=None,
+    profile_changes=None,
+    **options,
+):
     profile = load_profile(PROJECT_ROOT / "candidate").model_copy(
         update={
             "name": "Ada Example",
@@ -113,6 +124,7 @@ def chat_with(tmp_path, store, llm, judge=None, scope_guard=None, knowledge_base
             "city": "Sample Town",
             "phone": "0123 456",
         }
+        | (profile_changes or {})
     )
     return ChatService(
         llm,
@@ -228,6 +240,10 @@ def test_cover_letter_is_shown_and_personal_details_never_reach_the_llm(tmp_path
     assert shown.letter.text.startswith("Ada Example\nMain Street 1\n")
     assert "apply for Python LLM Engineer Full-time at Acme Corp." in shown.letter.text
     assert all(check.passed for check in shown.letter.checks)
+    # Kaggle Job Postings always get the English Letter Template, dated in English.
+    assert shown.letter.template_name == "ai"
+    today = date.today()
+    assert f"\nSample Town, {today.day} {today:%B %Y}\n" in shown.letter.text
     assert service.conversation("c1").current_job_id == 1
     sent = "\n".join(message.text for messages in llm.calls for message in messages)
     for detail in ["Ada Example", "Main Street", "0123 456", "12345"]:
@@ -1110,9 +1126,9 @@ def test_broken_pdf_asks_for_pasted_text_and_stores_nothing(tmp_path, store):
     assert service.conversations() == []
 
 
-def pasted_job_posting_id(tmp_path, store):
-    """The job ID of FACTS_AD, pasted in Conversation c1."""
-    service = chat(tmp_path, store, [ad_check(), proposed_facts(), "Got it."])
+def pasted_job_posting_id(tmp_path, store, **facts):
+    """The job ID of FACTS_AD, pasted in Conversation c1, with the Job Facts `facts` changed."""
+    service = chat(tmp_path, store, [ad_check(), proposed_facts(**facts), "Got it."])
     (pasted,) = of_kind(list(service.send("c1", "", job_ad=FACTS_AD)), PastedPostingEvent)
     return pasted.job_id
 
@@ -1259,3 +1275,99 @@ def test_applications_pdf_without_applications_is_explained_and_not_made(tmp_pat
     assert not result.is_error
     assert "no Applications yet" in result.content
     assert not of_kind(events, ApplicationTableEvent)
+
+
+GERMAN_MONTHS = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
+    "November", "Dezember",
+]  # fmt: skip
+
+POSITION = "Wissenschaftliche Mitarbeiterin / Wissenschaftlicher Mitarbeiter (m/w/d)"
+
+
+def letter_steps(job_id, gaps):
+    """The scripted LLM answers for one `write_cover_letter` call of a pasted job."""
+    return [
+        call("write_cover_letter", {"job_id": job_id}),
+        JobSummaries(role_summary="Forschung zu LLMs und Lehre.", company_vision="Forschung."),
+        gaps,
+        "Done.",
+    ]
+
+
+def test_german_ad_gets_a_letter_from_the_german_letter_template(tmp_path, store):
+    job_id = pasted_job_posting_id(tmp_path, store)
+    gaps = LetterGaps(company_vision="der Forschung", role_summary="zu LLMs zu forschen")
+    llm = FakeChatModel(responses=letter_steps(job_id, gaps))
+    service = chat_with(tmp_path, store, llm)
+
+    events = list(service.send("c1", "schreib das Anschreiben"))
+
+    (shown,) = of_kind(events, CoverLetterEvent)
+    letter = shown.letter
+    assert (letter.target_role, letter.template_name) == ("AI Engineer", "ai_de")
+    assert f"Stelle {POSITION} bei Universität Beispielstadt." in letter.text
+    assert "Gern unterstütze ich Sie bei der Forschung.\n" in letter.text
+    assert "Ich freue mich darauf, zu LLMs zu forschen.\n" in letter.text
+    today = date.today()
+    german_date = f"{today.day}. {GERMAN_MONTHS[today.month - 1]} {today.year}"
+    assert f"\nSample Town, {german_date}\n" in letter.text
+    assert all(check.passed for check in letter.checks)
+    assert letter.verdicts["Role summary"].value == "supported"
+    # The German template went to the LLM as written: nothing to translate.
+    assert "Sehr geehrte Damen und Herren," in llm.calls[-2][-1].text
+    layout = letter_layout(letter.text)
+    assert (layout.date, layout.subject) == (
+        f"Sample Town, {german_date}",
+        f"Bewerbung als {POSITION}",
+    )
+    assert letter_docx(letter.text).startswith(b"PK")
+    pdf_text = "".join(
+        page.extract_text() for page in PdfReader(io.BytesIO(letter_pdf(letter.text))).pages
+    )
+    assert german_date in pdf_text and "Mit freundlichen Grüßen" in pdf_text
+
+
+def test_english_ad_gets_the_english_template_of_the_job_facts_target_role(tmp_path, store):
+    job_id = pasted_job_posting_id(
+        tmp_path, store, target_role="Grant Management Specialist", language="English"
+    )
+    gaps = LetterGaps(company_vision="research", role_summary="research on LLMs")
+    service = chat_with(tmp_path, store, FakeChatModel(responses=letter_steps(job_id, gaps)))
+
+    events = list(service.send("c1", "write the cover letter"))
+
+    (shown,) = of_kind(events, CoverLetterEvent)
+    letter = shown.letter
+    assert (letter.target_role, letter.template_name) == ("Grant Management Specialist", "grant")
+    assert f"position of {POSITION} at Universität Beispielstadt." in letter.text
+    today = date.today()
+    assert f"\nSample Town, {today.day} {today:%B %Y}\n" in letter.text
+    assert all(check.passed for check in letter.checks)
+
+
+def test_missing_german_letter_template_names_the_file_to_add(tmp_path, store):
+    job_id = pasted_job_posting_id(tmp_path, store)
+    llm = FakeChatModel(responses=[call("write_cover_letter", {"job_id": job_id}), "Sorry."])
+    profile = load_profile(PROJECT_ROOT / "candidate")
+    without_german = {
+        name: template
+        for name, template in profile.letter_templates.items()
+        if template.language == "English"
+    }
+    service = chat_with(tmp_path, store, llm, profile_changes={"letter_templates": without_german})
+
+    events = list(service.send("c1", "schreib das Anschreiben"))
+
+    (result,) = of_kind(events, ToolResultEvent)
+    assert result.is_error
+    assert "No German Letter Template for Target Role 'AI Engineer'" in result.content
+    assert "add templates/ai_de.txt" in result.content
+    assert not of_kind(events, CoverLetterEvent)
+
+
+def test_system_prompt_says_never_to_translate_a_letter_template(tmp_path, store):
+    llm = FakeChatModel(responses=["Hello."])
+    list(chat_with(tmp_path, store, llm).send("c1", "hi"))
+
+    assert "Never translate a Letter Template" in llm.calls[0][0].text

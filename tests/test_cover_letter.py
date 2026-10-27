@@ -50,10 +50,10 @@ def profile(template=TEMPLATE, **options):
         email="ada@example.com",
         github="https://github.com/ada",
         target_roles={
-            "AI Engineer": "ai",
-            "AI Innovation Manager": "ai",
-            "Quantum Software Developer": "ai",
-            "Grant Management Specialist": "grant",
+            "AI Engineer": {"English": "ai", "German": "ai_de"},
+            "AI Innovation Manager": {"English": "ai", "German": "ai_de"},
+            "Quantum Software Developer": {"English": "ai", "German": "ai_de"},
+            "Grant Management Specialist": {"English": "grant", "German": "grant_de"},
         },
         letter_templates={
             "ai": LetterTemplate(name="ai", text=template),
@@ -277,7 +277,7 @@ def test_a_target_role_without_letter_template_gets_a_clear_message(tmp_path):
         update={"letter_templates": {"ai": LetterTemplate(name="ai", text=TEMPLATE)}}
     )
 
-    with pytest.raises(UserInputError, match=r"No Letter Template for .*Grant Management"):
+    with pytest.raises(UserInputError, match=r"No English Letter Template for .*Grant Management"):
         write_cover_letter(1, store, without_grant, FakeChatModel(responses=[]), FakeJudge())
 
 

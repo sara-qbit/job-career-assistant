@@ -1,0 +1,24 @@
+{{candidate_name}}
+{{candidate_street}}
+{{candidate_postal_code}} {{candidate_city}}
+{{candidate_country}}
+Tel.: {{candidate_phone}}
+{{candidate_email}}
+
+{{company_name}}
+{{company_address}}
+
+{{candidate_city}}, {{date}}
+
+Bewerbung als {{job_name}}
+
+Sehr geehrte Damen und Herren,
+hiermit bewerbe ich mich um die Stelle {{job_name}} {{work_type}} bei {{company_name}}. Dieser Text ist eine Beispielvorlage und wird durch meine eigene deutsche Vorlage ersetzt. Gern unterstütze ich Sie bei {{company_vision}}
+In einer Weiterbildung zum AI Engineer lerne ich die Entwicklung von LLM-Anwendungen:
+- Anwendungsentwicklung mit LangChain, RAG und Streamlit
+- KI-Agenten
+- Evaluation
+Meine aktuellen Projekte finden Sie auf GitHub: {{github}}. Ich freue mich darauf, {{role_summary}}
+Gern erläutere ich Ihnen in einem persönlichen Gespräch, wie ich zu den Zielen von {{company_name}} beitragen kann.
+Mit freundlichen Grüßen
+{{candidate_name}}

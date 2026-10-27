@@ -1,24 +1,42 @@
 """Cover Letter: the Letter Template of the posting's Target Role, filled in for one posting.
 
+A pasted Job Posting takes its Target Role, language, employer and position from its Job Facts, so
+a German ad gets the German Letter Template (never a translation). A Kaggle Job Posting gets the
+English Letter Template of its tagged Target Role.
+
 Only the gaps are filled. Candidate details and the job name, company and work type are copied
 exactly by code; the LLM writes only the two summary gaps, each completing its template sentence
 from the Job Info. The LLM never sees the candidate's personal details.
 """
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from turing_projects_v2.errors import ConfigError, UserInputError
+from turing_projects_v2.job_facts import create_job_facts
 from turing_projects_v2.job_info import NOT_STATED, create_job_info
 from turing_projects_v2.judge import Judge, Verdict
 from turing_projects_v2.llm import ask_structured
-from turing_projects_v2.profile import GAP_PATTERN, CandidateProfile, NotStatedWording
+from turing_projects_v2.profile import GAP_PATTERN, CandidateProfile, Language, NotStatedWording
 from turing_projects_v2.prompts import load_prompt
-from turing_projects_v2.store import Company, CoverLetter, JobInfo, JobStore, LetterCheck
+from turing_projects_v2.store import (
+    NOT_STATED_DE,
+    Company,
+    CoverLetter,
+    JobFacts,
+    JobInfo,
+    JobStore,
+    LetterCheck,
+)
+
+GERMAN_MONTHS = (
+    "Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
+    "November", "Dezember",
+)  # fmt: skip
 
 
 class LetterGaps(BaseModel):
@@ -46,16 +64,21 @@ def write_cover_letter(
     posting = store.get_posting(job_id)
     if posting is None:
         raise UserInputError(f"No Job Posting has job ID {job_id}.")
-    if posting.target_role is None:
+    facts = create_job_facts(posting, store, llm) if posting.source == "pasted" else None
+    target_role = facts.target_role if facts else posting.target_role
+    language: Language = facts.language if facts else "English"
+    if target_role is None:
         raise UserInputError(
             f"Job Posting {job_id} has no Target Role, so it has no Letter Template."
         )
     try:
-        template = profile.template_for(posting.target_role)
+        template = profile.template_for(target_role, language)
     except ConfigError as error:
         # The candidate can fix this (add the template), so they get the exact message.
         raise UserInputError(str(error)) from error
     info = create_job_info(job_id, store, llm, judge)
+    if facts:
+        info = _with_job_facts(info, facts)
     if not info.company_name:
         raise UserInputError(
             f"Job Posting {job_id} has no company name, so no Cover Letter can be written for it."
@@ -88,8 +111,7 @@ def write_cover_letter(
         "candidate_country": profile.country,
         "candidate_phone": profile.phone,
         "candidate_email": profile.email,
-        # The day the letter is written, e.g. "25 October 2026" (the letters are in English).
-        "date": f"{local_date.day} {local_date:%B %Y}",
+        "date": letter_date(local_date.date(), language),
         "github": profile.github,
         "company_name": info.company_name,
         "company_address": _address(company),
@@ -101,7 +123,7 @@ def write_cover_letter(
     text = fill(template.text, values)
     letter = CoverLetter(
         job_id=job_id,
-        target_role=posting.target_role,
+        target_role=target_role,
         template_name=template.name,
         text=text,
         checks=check_letter(text, template.text, info),
@@ -112,6 +134,21 @@ def write_cover_letter(
     )
     store.save_cover_letter(letter)
     return letter
+
+
+def _with_job_facts(info: JobInfo, facts: JobFacts) -> JobInfo:
+    """`info` with the employer and position of the Job Facts, as far as the ad states them."""
+    stated = {"company_name": facts.employer, "job_name": facts.position}
+    return info.model_copy(
+        update={field: value for field, value in stated.items() if value != NOT_STATED_DE}
+    )
+
+
+def letter_date(day: date, language: Language) -> str:
+    """`day` written in the letter's language, e.g. "30 November 2026" or "30. November 2026"."""
+    if language == "German":
+        return f"{day.day}. {GERMAN_MONTHS[day.month - 1]} {day.year}"
+    return f"{day.day} {day:%B %Y}"
 
 
 def _written_gaps(

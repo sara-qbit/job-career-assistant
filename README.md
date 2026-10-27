@@ -48,8 +48,10 @@ uv sync
    keep your real profile outside the repo and set `CANDIDATE_DIR` in `.env` to that folder
    (it needs `profile.toml` and `templates/`), so personal details never reach git. The
    Candidate Profile is the only source of facts about the candidate; its `[target_roles]` table
-   maps each Target Role to a Letter Template in `candidate/templates/<name>.txt` (gaps marked as
-   `{{gap_name}}`).
+   maps each Target Role to an English and a German Letter Template in
+   `candidate/templates/<name>.txt` (gaps marked as `{{gap_name}}`), e.g.
+   `"AI Engineer" = { English = "ai", German = "ai_de" }`. A pasted German ad gets the German
+   template (the assistant never translates one); Kaggle postings always get the English one.
 3. `candidate/title_variants.toml` lists, per Target Role, the job-title phrases to include and
    exclude.
 
