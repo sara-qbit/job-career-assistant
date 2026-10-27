@@ -1,6 +1,6 @@
 # Job Career Assistant
 
-A chatbot that finds job postings matching the candidate's target domain and writes a personalised cover letter for a chosen job, without inventing facts about the candidate.
+A chatbot that finds job postings matching the candidate's target domain and writes a personalised cover letter for a chosen job, without inventing facts about the candidate. It also takes job ads the candidate pastes, records the ones they applied to, and lists them in the Application Table, a German table for their Berater.
 
 ## Language
 
@@ -9,7 +9,7 @@ One vacancy, either imported from the Kaggle LinkedIn job postings dataset or pa
 _Avoid_: Job, vacancy, listing (when meaning the raw record), Pasted Job
 
 **Job Description**:
-The original, verbatim text of a Job Posting; always shown to the candidate exactly as imported, never rewritten.
+The original, verbatim text of a Job Posting; always shown to the candidate exactly as imported or pasted, never rewritten.
 _Avoid_: Summary, job details
 
 **Job Info**:
@@ -21,7 +21,7 @@ The five facts read from a pasted Job Posting as soon as it is pasted: employer,
 _Avoid_: Job Info (which adds summaries), extraction, read job
 
 **Knowledge Base**:
-The Job Postings tagged with a Target Role, which the chatbot can search by meaning; untagged postings are stored but not searchable.
+The Job Postings tagged with a Target Role, which the chatbot can search by meaning; untagged and pasted postings are stored but not searchable.
 _Avoid_: Corpus, dataset (when meaning what the bot searches)
 
 **Candidate Profile**:

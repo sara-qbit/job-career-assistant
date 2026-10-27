@@ -76,7 +76,7 @@ def conversation_list() -> None:
 
 
 def app_version() -> None:
-    """The app's version at the bottom of the sidebar, e.g. "Job Career Assistant v1.0"."""
+    """The app's version at the bottom of the sidebar, e.g. "Job Career Assistant v2.0"."""
     major, minor, *_ = version("turing-projects-v2").split(".")
     st.sidebar.caption(f"Job Career Assistant v{major}.{minor}")
 

@@ -2,13 +2,18 @@
 
 A chatbot for my own job search. It finds job postings that match my Target Roles, explains a
 chosen job, and writes a personalised cover letter for it, without inventing facts about me or
-the employer. Built for the Turing College Sprint 2 project (LangChain, advanced RAG, tool
-calling, Streamlit).
+the employer. Since v2 it also works on the real German job ads I apply to: I paste an ad (or
+attach its PDF), get its Job Facts and a German or English Cover Letter, record my Applications,
+and download them as one German table, `Bewerbungen.pdf`, for my Berater at the Arbeitsagentur.
+Built for the Turing College Sprint 2 project (LangChain, advanced RAG, tool calling,
+Streamlit).
 
 The app has two pages: **MAIN**, the chat, and **Evaluation**, everything behind the answers.
 
-> **Status: v1.0, complete.** Search, Job Info, Cover Letters, job market statistics, memory,
-> security measures, an Evaluation tab and a measured RAGAs evaluation.
+> **Status: v2.0, complete.** v1: search, Job Info, Cover Letters, job market statistics,
+> memory, security measures, an Evaluation tab and a measured RAGAs evaluation. v2: pasted
+> Job Postings (text or PDF), Job Facts, German Cover Letters, Applications and the Application
+> Table (see [v2: pasted Job Postings and Applications](#v2-pasted-job-postings-and-applications)).
 
 ![MAIN page: a search answer with linked citations, then the verbatim Job Description](docs/images/main-search.png)
 
@@ -21,7 +26,7 @@ The app has two pages: **MAIN**, the chat, and **Evaluation**, everything behind
 | --- | --- |
 | Advanced RAG: query translation | Self-query (search text + metadata filters) and multi-query (3-4 variants), `rag/retriever.py` |
 | Advanced RAG: structured retrieval | Metadata filters (remote, location, work type, experience, Target Role) on ChromaDB; Reciprocal Rank Fusion; cross-encoder reranker |
-| At least 3 domain tools | 5 tools: `search_jobs`, `get_job_description`, `create_job_info`, `write_cover_letter`, `job_market_stats` (`tools/`) |
+| At least 3 domain tools | 9 tools: v1's `search_jobs`, `get_job_description`, `create_job_info`, `write_cover_letter`, `job_market_stats`; v2's `change_job_facts`, `record_application`, `remove_application`, `application_table` (`tools/`) |
 | LangChain with OpenRouter | `create_agent` with OpenRouter models through LangChain's OpenAI-compatible client (`llm.py`, `agent/`) |
 | Streamlit UI with sources, tool results, progress | MAIN page: streamed answers, status lines while tools run, linked `[n]` citations, cards per tool |
 | Security measures | Input validation, prompt-injection flagging, LLM scope guard, tool-call cap, personal-data redaction, security log (`security.py`) |
@@ -97,10 +102,66 @@ uv run turing-projects-v2 evaluate rag       # 6 configurations x approved quest
 
 Generated questions are approved or rejected on the Evaluation tab before `evaluate rag`.
 
+## v2: pasted Job Postings and Applications
+
+v1 only knows the Kaggle postings: old US jobs. v2 lets me work on the jobs I actually apply to,
+mostly German ads on company and university websites, and gives my Berater at the Arbeitsagentur
+the list of Applications they ask for. The Kaggle search and everything else from v1 stay as they
+are.
+
+**Paste a job ad.** On the MAIN page, open **Paste a job ad**, paste the full text of the ad and
+press **Send the job ad**; or attach the ad as a PDF with the paperclip in the chat input (a
+typed message alongside it is optional). The ad becomes a pasted Job Posting with its own job ID,
+stored unchanged; pasting the same ad again reuses it. An ad may have up to 30,000 characters,
+while typed messages keep v1's 2,000-character limit. The ad goes through the same
+prompt-injection check (flagged and logged) and reaches the model only as data. A PDF without
+readable text (a scan) is refused with a request to paste the text, and a text that is not a job
+ad is refused and nothing is stored.
+
+**Job Facts.** Right after pasting, a Job Facts card shows employer, position, city,
+Vollzeit/Teilzeit and Präsenz/Online/Hybrid, with a suggested Target Role and the ad's language.
+Employer, position and city (and the address and contact person, when the ad states them) are
+copied word for word from the ad; Vollzeit/Teilzeit and Präsenz/Online/Hybrid are fixed German
+values, each backed by a quote that must appear in the ad. Anything the ad does not back up is
+"nicht angegeben". Change them in the chat: "use Grant Management", "write it in English", "the
+address is ...".
+
+**Job Description, Job Info and Cover Letter** work on a pasted Job Posting as on a Kaggle one ("show
+the Job Description", "tell me about this job", "write the cover letter"). The company vision
+comes from the ad text only.
+
+**German Cover Letters.** Each Target Role has an English and a German Letter Template. A German
+ad gets a German letter from the German template, an English ad the English one; the assistant
+never translates a template. The letter is addressed to the address and contact person in the
+ad ("z. Hd. Herrn Prof. Dr. Thomas Krüger", "Sehr geehrter Herr Prof. Dr. Krüger,"; in English
+"Attn: ..." and e.g. "Dear Dr. Weber,"), or to the company and city with "Sehr geehrte Damen
+und Herren," / "Dear Hiring Team," when no contact person with Frau/Herr (or Mr/Ms) is named.
+The date is German ("30. November 2026"); v1's exact checks, the judge and the Word/PDF
+downloads work as before. Kaggle postings always get the English template.
+
+**Applications.** Say "save it" or "I applied" and the assistant records an Application for the
+current pasted Job Posting, dated today. Saying it again answers "Already applied on <date>";
+"remove the application" or "I didn't apply" removes it (the Job Posting stays). Kaggle postings
+cannot be saved: only real jobs go on the Application Table for the Berater.
+
+**The Application Table.** Ask for "the Applications PDF" (or "my list of applications"): the
+chat shows a short preview of the latest rows and a **Download PDF** button for
+`Bewerbungen.pdf`, the Application Table: one colourful German table of all Applications so far.
+It is titled "Bewerbungen" with my name and "Stand: <today>", has the columns Datum,
+Arbeitgeber, Stelle, Ort, Vollzeit/Teilzeit and Präsenz/Online, lists the oldest Application
+first and writes dates as 30.11.2026. With no Applications yet, the assistant says so and makes
+no PDF.
+
+**Out of scope for v2.** OCR for scanned PDFs; fetching ads from a URL or the Arbeitsagentur
+Jobsuche API; batch uploads of many PDFs; per-day tables, several Application PDFs or a separate
+Applications sidebar page; tracking an Application beyond "applied" (interview, rejection,
+offer); translating Letter Templates or letters; adding pasted Job Postings to the Knowledge Base
+or the market statistics; a Kundennummer or other Arbeitsagentur identifiers on the table.
+
 ## Test
 
 ```bash
-uv run pytest                                  # 220 tests, offline: LLM, embedder and judge are fakes
+uv run pytest                                  # 294 tests, offline: LLM, embedder and judge are fakes
 uv run ruff check . && uv run ruff format .
 ```
 
@@ -119,6 +180,16 @@ flowchart TD
     A --> T3[create_job_info]
     A --> T4[write_cover_letter]
     A --> T5[job_market_stats]
+    P[Pasted job ad<br/>text or PDF] --> S
+    S -- ad --> JF[Ad check + Job Facts<br/>word-for-word checks]
+    JF --> DB
+    JF --> A
+    A --> T6[change_job_facts]
+    A --> T7[record_application /<br/>remove_application]
+    A --> T8[application_table]
+    T6 --> DB
+    T7 --> DB
+    T8 --> PDF[Bewerbungen.pdf]
     T1 --> SQ[Self-query: search text + filters]
     SQ --> MQ[Multi-query: 3-4 variants]
     MQ --> V[(ChromaDB<br/>MiniLM / Gemini / Qwen3)]
@@ -148,6 +219,11 @@ byte, no LLM); `create_job_info` (job name, company and work type copied exactly
 LLM-written role summary and company vision, each checked by the judge); `write_cover_letter`
 (fills the Target Role's Letter Template: exact fields from the posting, written gaps checked by
 the judge); `job_market_stats` (counts and salary quartiles computed in SQL, shown as charts).
+v2 adds `change_job_facts` (Target Role, letter language or address of a pasted Job Posting),
+`record_application` and `remove_application` (pasted Job Postings only, one per posting), and
+`application_table` (the German `Bewerbungen.pdf`, built with reportlab). A pasted ad needs no
+tool call: the Chat service checks that it is a job ad, stores it and creates its Job Facts
+before the agent answers, and the Job Facts card appears first.
 
 **Agent loop and memory.** A LangChain `create_agent` on OpenRouter decides which tools to call.
 Conversations are stored by the LangGraph SQLite checkpointer, one thread per Conversation; only
@@ -162,9 +238,9 @@ reason) on a second model. Cover Letters also get deterministic checks (job name
 type and the template text must appear exactly); a gap judged fabricated is rewritten once, and
 a remaining problem is shown as a warning.
 
-**Security.** Empty, over-long (2,000 characters) or control-character messages are rejected;
-prompt-injection phrases are flagged and logged; an LLM scope guard refuses requests that are
-not about job search; posting text reaches the LLM inside data blocks marked as data, not
+**Security.** Empty, over-long (2,000 characters; 30,000 for a pasted job ad) or
+control-character messages are rejected; prompt-injection phrases are flagged and logged; an LLM
+scope guard refuses requests that are not about job search; posting text reaches the LLM inside data blocks marked as data, not
 instructions; the candidate's personal details reach only the Cover Letter call and are redacted
 from log excerpts. Every event is in the security log on the Evaluation tab.
 
@@ -179,9 +255,10 @@ from log excerpts. Every event is in the security log on the Evaluation tab.
 | `src/turing_projects_v2/importer.py`, `tagging.py` | Kaggle CSV import; Target Role tagging from title variants |
 | `src/turing_projects_v2/store/` | SQLite data store (postings, Job Info, letters, Conversations, logs, evaluation) |
 | `src/turing_projects_v2/rag/` | Embedding providers, indexer, Retriever, reranker |
-| `src/turing_projects_v2/tools/` | The five agent tools |
+| `src/turing_projects_v2/tools/` | The nine agent tools |
+| `src/turing_projects_v2/pasted_posting.py`, `job_facts.py`, `applications.py` | v2: pasted Job Postings (text or PDF), Job Facts, Applications and the Application Table |
 | `src/turing_projects_v2/agent/` | Agent, memory and the Chat service (one turn = a stream of answer events) |
-| `src/turing_projects_v2/job_info.py`, `cover_letter.py`, `judge.py`, `documents.py` | Job Info, Cover Letters, the judge, .docx and PDF downloads |
+| `src/turing_projects_v2/job_info.py`, `cover_letter.py`, `judge.py`, `documents.py` | Job Info, Cover Letters, the judge, .docx and PDF downloads (letters and `Bewerbungen.pdf`) |
 | `src/turing_projects_v2/security.py` | Validation, injection flagging, scope guard, redaction |
 | `src/turing_projects_v2/evaluation/` | Accuracy measures, RAGAs runs, test-set generation, agent cases |
 | `src/turing_projects_v2/export.py` | Conversation export as Markdown and JSON |
@@ -266,12 +343,18 @@ scope, data, tools and wording, and reviewed every ticket before it was committe
    and the test questions were generated by an LLM too.
 8. **Strict Parameter Accuracy.** A reasonable rewording of a search request counts as wrong.
 9. **Slow first start.** Loading the Knowledge Base and the reranker takes up to a minute.
+10. **v2: a new Conversation cannot find an earlier pasted Job Posting.** No tool lists the pasted Job
+    Postings, so to save a job pasted days ago I reopen its Conversation from the sidebar or
+    paste the ad again (which reuses the stored Job Posting).
+11. **v2: Job Facts depend on how the ad is written.** A city or employer written differently
+    in different places of the ad, or work mode stated only implicitly, becomes "nicht
+    angegeben" rather than a guess.
 
 **Improvement ideas**
 
-1. **v2 for current German postings:** paste or upload one job description (German or English),
-   German Letter Templates, a "save" tool for the jobs applied to, and a daily German table PDF of
-   saved applications for the Arbeitsagentur.
+1. ~~**v2 for current German postings**~~: done in v2.0 (see
+   [v2: pasted Job Postings and Applications](#v2-pasted-job-postings-and-applications)), with
+   one Application Table of all Applications instead of a daily one.
 2. **More postings for the small roles:** broader title variants and further sources for quantum
    and innovation roles.
 3. **Tighter tagging:** exclude phrases such as "SME" or "Treasury" for Quantum, and review every
@@ -302,6 +385,7 @@ scope, data, tools and wording, and reviewed every ticket before it was committe
 | v0.8 | 2026-10-24 | Sidebar: Conversations, embedding-model dropdown, cross-encoder reranker |
 | v0.9 | 2026-10-24 | Evaluation tab: history and export, RAG process, sources, cost, tool calls, security, prompts |
 | v1.0 | 2026-10-25 | RAGAs evaluation, Tool Selection and Parameter Accuracy, field accuracy; this README |
+| v2.0 | 2026-10-27 | Pasted job ads (text and PDF), Job Facts, Applications, the Application Table (`Bewerbungen.pdf`), German Cover Letters with address and contact person |
 
 ## Data credit
 
