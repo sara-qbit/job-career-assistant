@@ -15,6 +15,7 @@ from turing_projects_v2.agent.chat import (
     CoverLetterEvent,
     ErrorEvent,
     JobDescriptionEvent,
+    JobFactsEvent,
     JobInfoEvent,
     MarketStatsEvent,
     PastedPostingEvent,
@@ -29,7 +30,7 @@ from turing_projects_v2.documents import letter_docx, letter_pdf
 from turing_projects_v2.job_info import NOT_STATED
 from turing_projects_v2.judge import Verdict
 from turing_projects_v2.rag.retriever import SearchResult
-from turing_projects_v2.store import CoverLetter, JobInfo, TokenUsage, UsageTotal
+from turing_projects_v2.store import CoverLetter, JobFacts, JobInfo, TokenUsage, UsageTotal
 from turing_projects_v2.tools.stats import MarketStats
 
 CITATION = re.compile(r"\[(\d+)\](?!\()")
@@ -50,6 +51,29 @@ def link_citations(text: str, citations: dict[int, SearchResult]) -> str:
 def escape_markdown(text: str) -> str:
     """`text` for Streamlit Markdown: a "$" would start a LaTeX formula (salaries contain many)."""
     return text.replace("$", r"\$")
+
+
+def show_job_facts(facts: JobFacts) -> None:
+    """The Job Facts card: the checked facts, their backing quotes, Target Role and language."""
+
+    def backed(value: str, quote: str | None) -> str:
+        return f'{value} ("{escape_markdown(quote)}")' if quote else value
+
+    with st.container(border=True):
+        st.markdown("**Job Facts**")
+        st.markdown(
+            f"**Employer:** {escape_markdown(facts.employer)}  \n"
+            f"**Position:** {escape_markdown(facts.position)}  \n"
+            f"**City:** {escape_markdown(facts.city)}  \n"
+            f"**Vollzeit/Teilzeit:** {backed(facts.employment, facts.employment_quote)}  \n"
+            f"**Präsenz/Online/Hybrid:** {backed(facts.work_mode, facts.work_mode_quote)}"
+        )
+        st.caption(
+            "Employer, position and city are copied word for word from the ad; Vollzeit/Teilzeit "
+            "and Präsenz/Online/Hybrid are backed by the quoted words of the ad."
+        )
+        st.markdown(f"**Target Role:** {facts.target_role}  \n**Language:** {facts.language}")
+        st.caption('Change them in the chat, e.g. "use Grant Management" or "write it in English".')
 
 
 def show_job_info(info: JobInfo) -> None:
@@ -220,6 +244,9 @@ class AnswerView:
                     # st.text would dedent and strip the text; st.code keeps it as stored
                     # (apart from one leading and one trailing newline).
                     st.code(description.text, language=None, wrap_lines=True)
+            case JobFactsEvent(facts=facts):
+                self._text_area = None
+                show_job_facts(facts)
             case JobInfoEvent(info=info):
                 self._text_area = None
                 show_job_info(info)

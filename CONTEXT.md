@@ -17,7 +17,7 @@ The structured summary of one Job Posting (job name, company, work type, company
 _Avoid_: Job summary, job details, extraction
 
 **Job Facts**:
-The five facts read from a pasted Job Posting as soon as it is pasted: employer, position, city, full or part time, on-site or online; employer, position and city are copied word for word from the Job Description; full or part time and on-site or online are fixed German values (Vollzeit/Teilzeit, Präsenz/Online/Hybrid), each backed by words that appear in the Job Description; any fact not found is "not stated".
+The five facts read from a pasted Job Posting as soon as it is pasted: employer, position, city, full or part time, on-site or online; employer, position and city are copied word for word from the Job Description; full or part time and on-site or online are fixed German values (Vollzeit/Teilzeit, Präsenz/Online/Hybrid), each backed by words that appear in the Job Description; any fact not found is "nicht angegeben". Stored with them: a suggested Target Role and the ad's language (German or English), both changeable by the candidate, and the address and contact person if the ad states them word for word.
 _Avoid_: Job Info (which adds summaries), extraction, read job
 
 **Knowledge Base**:

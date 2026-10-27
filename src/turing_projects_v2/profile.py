@@ -8,20 +8,21 @@ Layout of the candidate directory:
 import re
 import tomllib
 from pathlib import Path
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from turing_projects_v2.errors import ConfigError, DataValidationError
 
-TARGET_ROLES = frozenset(
-    {
-        "AI Engineer",
-        "AI Innovation Manager",
-        "Quantum Software Developer",
-        "Grant Management Specialist",
-    }
-)
+type TargetRole = Literal[
+    "AI Engineer",
+    "AI Innovation Manager",
+    "Quantum Software Developer",
+    "Grant Management Specialist",
+]
+
+TARGET_ROLES: frozenset[str] = frozenset(get_args(TargetRole.__value__))
 
 GAP_PATTERN = re.compile(r"\{\{(\w+)\}\}")
 

@@ -23,6 +23,7 @@ from turing_projects_v2.agent.agent import TOOL_CALL_CAP_RESULT, build_agent
 from turing_projects_v2.agent.memory import open_checkpointer
 from turing_projects_v2.config import Settings
 from turing_projects_v2.errors import AppError, ExternalAPIError
+from turing_projects_v2.job_facts import create_job_facts, facts_text
 from turing_projects_v2.judge import Judge, open_judge
 from turing_projects_v2.llm import chat_model
 from turing_projects_v2.pasted_posting import NotAJobAdError, store_job_ad
@@ -49,6 +50,7 @@ from turing_projects_v2.security import (
 from turing_projects_v2.store import (
     ConversationSummary,
     CoverLetter,
+    JobFacts,
     JobInfo,
     JobStore,
     SecurityLogEntry,
@@ -63,6 +65,7 @@ TOOL_STATUS = {
     "get_job_description": "Fetching the Job Description",
     "create_job_info": "Creating the Job Info and checking it",
     "write_cover_letter": "Writing the Cover Letter and checking it",
+    "change_job_facts": "Changing the Job Facts",
     "job_market_stats": "Computing job market statistics",
 }
 
@@ -128,6 +131,13 @@ class PastedPostingEvent(BaseModel):
     reused: bool
 
 
+class JobFactsEvent(BaseModel):
+    """The Job Facts of a pasted Job Posting, shown as a card."""
+
+    kind: Literal["job_facts"] = "job_facts"
+    facts: JobFacts
+
+
 class JobDescriptionEvent(BaseModel):
     kind: Literal["job_description"] = "job_description"
     description: JobDescription
@@ -175,6 +185,7 @@ type AnswerEvent = Annotated[
     | ToolResultEvent
     | CitationsEvent
     | PastedPostingEvent
+    | JobFactsEvent
     | JobDescriptionEvent
     | JobInfoEvent
     | CoverLetterEvent
@@ -188,6 +199,7 @@ type AnswerEvent = Annotated[
 
 TOOL_CARD_EVENTS = (
     CitationsEvent,
+    JobFactsEvent,
     JobDescriptionEvent,
     JobInfoEvent,
     CoverLetterEvent,
@@ -283,7 +295,8 @@ class ChatService:
 
         `job_ad` is the text of a job ad attached to the message (which may then be empty). It
         has its own length limit, is stored as a pasted Job Posting that becomes the current
-        job, and reaches the agent only inside a data block.
+        job, and reaches the agent only inside a data block. Its Job Facts are yielded without
+        being asked for.
 
         Token usage of every LLM call (also those inside tools) is recorded in the store and
         yielded as a UsageEvent.
@@ -353,8 +366,18 @@ class ChatService:
                 reused=reused,
             )
             yield pasted
+            # The posting is stored either way; pasting the ad again retries its Job Facts.
+            facts: JobFacts | None = None
+            try:
+                facts = create_job_facts(posting, self._store, self._llm, {"callbacks": [recorder]})
+                yield JobFactsEvent(facts=facts)
+            except AppError as error:
+                yield ErrorEvent(
+                    message="The job ad is stored, but its Job Facts could not be read: "
+                    f"{error.user_message} Paste the ad again to try once more."
+                )
             agent_input = {
-                "messages": [_with_job_ad(question, job_ad, pasted)],
+                "messages": [_with_job_ad(question, job_ad, pasted, facts)],
                 "current_job_id": posting.job_id,
             }
             title = f"Job ad: {posting.title}"
@@ -443,7 +466,12 @@ class ChatService:
                 # A turn with a job ad keeps the typed question and the stored posting aside.
                 question = message.additional_kwargs.get("question", message.text)
                 pasted = message.additional_kwargs.get("pasted_posting")
-                events = [PastedPostingEvent.model_validate(pasted)] if pasted else []
+                facts = message.additional_kwargs.get("job_facts")
+                events: list[AnswerEvent] = []
+                if pasted:
+                    events.append(PastedPostingEvent.model_validate(pasted))
+                if facts:
+                    events.append(JobFactsEvent(facts=JobFacts.model_validate(facts)))
                 turns.append(Turn(question=question, events=events, usage=turn_usage))
             elif turns:
                 turns[-1].events += _update_events(message)
@@ -490,16 +518,27 @@ def _title(question: str) -> str:
     return question[: TITLE_LENGTH - 1].rsplit(" ", 1)[0].rstrip(" ,.;:") + "…"
 
 
-def _with_job_ad(question: HumanMessage, job_ad: str, pasted: PastedPostingEvent) -> HumanMessage:
-    """The question with the attached job ad appended as a data block."""
+def _with_job_ad(
+    question: HumanMessage, job_ad: str, pasted: PastedPostingEvent, facts: JobFacts | None
+) -> HumanMessage:
+    """The question with the attached job ad and its Job Facts (if read) as data blocks."""
     stored = "was already stored" if pasted.reused else "is now stored"
+    if facts is None:
+        shown, facts_block = "Its Job Facts could not be read.", ""
+    else:
+        shown = "Its Job Facts are shown to the candidate in their own card."
+        facts_block = f"\n<job_facts_data>\n{facts_text(facts)}\n</job_facts_data>"
     return HumanMessage(
         f"{question.text}\n\n"
         f"[The candidate attached a job ad; it {stored} as job ID {pasted.job_id} and is the "
-        "current job.]\n"
-        f"<job_posting_data>\n{job_ad}\n</job_posting_data>",
+        f"current job. {shown}]\n"
+        f"<job_posting_data>\n{job_ad}\n</job_posting_data>{facts_block}",
         id=question.id,
-        additional_kwargs={"question": question.text, "pasted_posting": pasted.model_dump()},
+        additional_kwargs={
+            "question": question.text,
+            "pasted_posting": pasted.model_dump(),
+            "job_facts": facts.model_dump() if facts else None,
+        },
     )
 
 
@@ -542,6 +581,8 @@ def _update_events(message: Any) -> Iterator[AnswerEvent]:
             yield JobDescriptionEvent(description=JobDescription.model_validate(message.artifact))
         elif message.name == "create_job_info":
             yield JobInfoEvent(info=JobInfo.model_validate(message.artifact))
+        elif message.name == "change_job_facts":
+            yield JobFactsEvent(facts=JobFacts.model_validate(message.artifact))
         elif message.name == "write_cover_letter":
             yield CoverLetterEvent(letter=CoverLetter.model_validate(message.artifact))
         elif message.name == "job_market_stats":

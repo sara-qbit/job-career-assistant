@@ -1,5 +1,6 @@
 """The job tools: `search_jobs` (the Retriever), `get_job_description` (verbatim, no LLM),
-`create_job_info` (summaries checked by the judge) and `write_cover_letter`.
+`create_job_info` (summaries checked by the judge), `write_cover_letter` and `change_job_facts`
+(the candidate's Target Role and language for a pasted Job Posting).
 
 Each tool returns a short text for the LLM plus an artifact (a JSON-ready dict) that the Chat
 service turns into answer events. Expected failures raise AppError subclasses; the agent hands
@@ -13,15 +14,15 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel
 
-from turing_projects_v2 import cover_letter, job_info
+from turing_projects_v2 import cover_letter, job_facts, job_info
 from turing_projects_v2.errors import UserInputError
 from turing_projects_v2.judge import Judge
-from turing_projects_v2.profile import CandidateProfile
+from turing_projects_v2.profile import CandidateProfile, TargetRole
 from turing_projects_v2.rag import retriever
 from turing_projects_v2.rag.indexer import NOT_STATED, KnowledgeBase
 from turing_projects_v2.rag.reranker import Reranker
 from turing_projects_v2.rag.retriever import SearchSettings
-from turing_projects_v2.store import JobStore
+from turing_projects_v2.store import JobStore, Language
 
 
 class JobDescription(BaseModel):
@@ -157,4 +158,33 @@ def job_tools(
         ]
         return "\n".join(lines), letter.model_dump(mode="json")
 
-    return [search_jobs, get_job_description, create_job_info, write_cover_letter]
+    @tool(response_format="content_and_artifact")
+    def change_job_facts(
+        job_id: int, target_role: TargetRole | None = None, language: Language | None = None
+    ) -> tuple[str, dict]:
+        """Change the Target Role or the letter language in the Job Facts of a pasted Job
+        Posting, when the candidate asks (e.g. "use Grant Management", "write it in English"),
+        and show the changed Job Facts card.
+
+        Args:
+            job_id: the job ID of the pasted posting.
+            target_role: the Target Role the candidate chose, if they changed it.
+            language: the language the candidate chose for the letter, if they changed it.
+        """
+        facts = job_facts.change_job_facts(
+            job_id, store, llm, target_role=target_role, language=language
+        )
+        content = (
+            f"The changed Job Facts of job ID {job_id} are now shown to the candidate in their "
+            "own card; do not repeat them.\n"
+            f"<job_facts_data>\n{job_facts.facts_text(facts)}\n</job_facts_data>"
+        )
+        return content, facts.model_dump(mode="json")
+
+    return [
+        search_jobs,
+        get_job_description,
+        create_job_info,
+        write_cover_letter,
+        change_job_facts,
+    ]

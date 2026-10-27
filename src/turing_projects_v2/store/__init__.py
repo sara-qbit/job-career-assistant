@@ -1,4 +1,5 @@
-"""Data store: SQLite repository for Job Postings, companies, Job Info, Cover Letters and logs.
+"""Data store: SQLite repository for Job Postings, companies, Job Facts, Job Info, Cover Letters
+and logs.
 
 Callers use domain operations only; the SQL stays inside this module.
 """
@@ -14,6 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from turing_projects_v2.judge import Verdict
+from turing_projects_v2.profile import TargetRole
 
 # Kaggle postings.csv columns with their SQLite types. Type affinity turns "2774458.0" into 2774458.
 POSTING_COLUMNS = {
@@ -105,6 +107,38 @@ class Company(BaseModel):
     state: str | None
     zip_code: str | None
     country: str | None
+
+
+NOT_STATED_DE = "nicht angegeben"
+"""A Job Fact the ad does not state (or whose backing quote is not in the ad)."""
+
+type Language = Literal["German", "English"]
+type Employment = Literal["Vollzeit", "Teilzeit", "nicht angegeben"]
+type WorkMode = Literal["Präsenz", "Online", "Hybrid", "nicht angegeben"]
+
+
+class JobFacts(BaseModel):
+    """The facts of one pasted Job Posting, each checked against its Job Description.
+
+    Employer, position and city are copied word for word from the ad; employment and work mode
+    are fixed German values backed by a quote from the ad. A fact not found is NOT_STATED_DE;
+    address and contact person (word for word too) are None then.
+    """
+
+    job_id: int
+    employer: str
+    position: str
+    city: str
+    employment: Employment
+    employment_quote: str | None
+    work_mode: WorkMode
+    work_mode_quote: str | None
+    address: str | None
+    contact_person: str | None
+    target_role: TargetRole
+    """The suggested Target Role, or the one the candidate chose."""
+    language: Language
+    """The ad's language, or the one the candidate chose for the letter."""
 
 
 class JobInfo(BaseModel):
@@ -320,6 +354,10 @@ class JobStore:
                 "role_summary_reason TEXT, company_vision_verdict TEXT, "
                 "company_vision_reason TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS job_facts ("
+                "job_id INTEGER PRIMARY KEY REFERENCES postings (job_id), facts TEXT NOT NULL)"
+            )
             # The whole letter as JSON, plus the columns needed to find it.
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS cover_letters ("
@@ -505,6 +543,18 @@ class JobStore:
                 Verdict(value=value, reason=reason) if value is not None else None
             )
         return JobInfo.model_validate(fields)
+
+    def save_job_facts(self, facts: JobFacts) -> None:
+        """Save the Job Facts of their posting, replacing earlier ones."""
+        with self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO job_facts (job_id, facts) VALUES (?, ?)",
+                (facts.job_id, facts.model_dump_json()),
+            )
+
+    def get_job_facts(self, job_id: int) -> JobFacts | None:
+        row = self._db.execute("SELECT facts FROM job_facts WHERE job_id = ?", (job_id,)).fetchone()
+        return JobFacts.model_validate_json(row["facts"]) if row else None
 
     def save_cover_letter(self, letter: CoverLetter) -> None:
         with self._db:

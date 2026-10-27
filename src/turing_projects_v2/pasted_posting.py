@@ -4,6 +4,8 @@ The ad text is stored unchanged. Position and employer are taken from the LLM's 
 when they appear word for word in the ad.
 """
 
+import re
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -55,11 +57,17 @@ def store_job_ad(
             f"This text does not look like a job ad ({check.reason.rstrip('.')}), so I did not "
             "store it. Please paste the full text of a job ad."
         )
-    title = _copied(check.position, text) or UNKNOWN_POSITION
-    return store.add_pasted_posting(text, title, _copied(check.employer, text)), False
+    title = copied(check.position, text) or UNKNOWN_POSITION
+    return store.add_pasted_posting(text, title, copied(check.employer, text)), False
 
 
-def _copied(value: str, text: str) -> str | None:
-    """`value` if it appears word for word in `text`, else None."""
-    value = value.strip()
-    return value if value and value in text else None
+def copied(value: str, text: str) -> str | None:
+    """`value` as `text` writes it, if it appears there word for word, else None.
+
+    Whitespace may differ (an address in an ad often spans lines); the words may not.
+    """
+    words = value.split()
+    if not words:
+        return None
+    found = re.search(r"\s+".join(map(re.escape, words)), text)
+    return found.group(0) if found else None
