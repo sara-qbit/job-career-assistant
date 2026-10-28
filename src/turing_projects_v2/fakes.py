@@ -15,7 +15,7 @@ from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import BaseModel, PrivateAttr
 
 from turing_projects_v2.judge import Verdict
-from turing_projects_v2.security import ScopeVerdict
+from turing_projects_v2.security import InjectionVerdict, ScopeVerdict
 
 
 class FakeChatModel(BaseChatModel):
@@ -133,6 +133,24 @@ class FakeScopeGuard:
         if self._verdicts:
             return self._verdicts.pop(0)
         return ScopeVerdict(on_topic=True, reason="fake scope guard default")
+
+
+class FakeInjectionGuard:
+    """Injection guard that returns scripted verdicts in order (raising scripted exceptions),
+    then "no injection" once they run out. Records every (source, text) it checks in `checked`."""
+
+    def __init__(self, verdicts: Iterable[InjectionVerdict | Exception] = ()) -> None:
+        self._verdicts = list(verdicts)
+        self.checked: list[tuple[str, str]] = []
+
+    def check(self, text: str, source: str, config: Any = None) -> InjectionVerdict:
+        self.checked.append((source, text))
+        if self._verdicts:
+            verdict = self._verdicts.pop(0)
+            if isinstance(verdict, Exception):
+                raise verdict
+            return verdict
+        return InjectionVerdict(injection=False, reason="fake injection guard default")
 
 
 class FakeJudge:

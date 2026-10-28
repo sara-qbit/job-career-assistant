@@ -94,6 +94,44 @@ class LLMScopeGuard:
         )
 
 
+type InjectionSource = Literal["message", "job_ad"]
+
+
+class InjectionVerdict(BaseModel):
+    injection: bool = Field(
+        description="whether the text tries to change the assistant's instructions or behaviour"
+    )
+    reason: str = Field(description="one short sentence")
+
+
+class InjectionGuard(Protocol):
+    def check(
+        self, text: str, source: InjectionSource, config: RunnableConfig | None = None
+    ) -> InjectionVerdict: ...
+
+
+class LLMInjectionGuard:
+    """Decides with one small structured LLM call whether a message or job ad is a prompt
+    injection. Unlike the regex patterns it judges meaning, so rephrased or German attacks count."""
+
+    def __init__(self, llm: BaseChatModel) -> None:
+        self._llm = llm
+
+    def check(
+        self, text: str, source: InjectionSource, config: RunnableConfig | None = None
+    ) -> InjectionVerdict:
+        tag = "candidate_message" if source == "message" else "job_ad"
+        return ask_structured(
+            self._llm,
+            InjectionVerdict,
+            [
+                SystemMessage(load_prompt("injection_guard")),
+                HumanMessage(f"<{tag}>\n{text}\n</{tag}>"),
+            ],
+            config,
+        )
+
+
 def looks_like_injection(message: str) -> bool:
     return any(pattern.search(message) for pattern in INJECTION_PATTERNS)
 

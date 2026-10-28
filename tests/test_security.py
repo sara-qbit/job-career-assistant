@@ -1,10 +1,17 @@
 import pytest
 
 from tests.test_chat import answer_text, call, chat_store, chat_with, looping_calls, of_kind
-from turing_projects_v2.agent.chat import ErrorEvent, SecurityEvent, ToolCallEvent, ToolResultEvent
-from turing_projects_v2.config import PROJECT_ROOT
+from turing_projects_v2.agent.chat import (
+    ChatService,
+    ErrorEvent,
+    SecurityEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
+from turing_projects_v2.config import PROJECT_ROOT, load_settings
 from turing_projects_v2.cover_letter import LetterGaps
-from turing_projects_v2.fakes import FakeChatModel, FakeScopeGuard
+from turing_projects_v2.errors import ExternalAPIError
+from turing_projects_v2.fakes import FakeChatModel, FakeInjectionGuard, FakeScopeGuard
 from turing_projects_v2.job_info import JobSummaries
 from turing_projects_v2.prompts import load_prompt
 from turing_projects_v2.security import LLMScopeGuard, ScopeVerdict
@@ -104,6 +111,37 @@ def test_on_topic_requests_reach_the_agent(tmp_path, store):
 
     assert answer_text(events) == "Sure."
     assert not of_kind(events, SecurityEvent)
+
+
+def test_a_failed_injection_guard_stops_the_turn_instead_of_skipping_the_check(tmp_path, store):
+    guard = FakeInjectionGuard([ExternalAPIError("down")])
+    llm = FakeChatModel(responses=["Sure."])
+    service = chat_with(tmp_path, store, llm, injection_guard=guard)
+
+    events = list(service.send("c1", "python jobs"))
+
+    (error,) = of_kind(events, ErrorEvent)
+    assert "not responding" in error.message
+    assert answer_text(events) == ""
+    assert llm.calls == []
+
+
+def test_no_setting_turns_security_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "OPENROUTER_API_KEY=sk-test\nDEV_MODE=true\nSECURITY=off\nINJECTION_GUARD=false\n"
+    )
+
+    settings = load_settings(env_file)
+
+    assert not any(
+        word in name for name in type(settings).model_fields for word in ("secur", "guard", "dev")
+    )
+    with pytest.raises(TypeError, match="injection_guard"):
+        ChatService(None, None, None, None, None, scope_guard=FakeScopeGuard())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="scope_guard"):
+        ChatService(None, None, None, None, None, injection_guard=FakeInjectionGuard())  # type: ignore[arg-type]
 
 
 def test_llm_scope_guard_asks_for_a_verdict_on_the_message():

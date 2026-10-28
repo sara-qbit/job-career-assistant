@@ -40,6 +40,9 @@ from turing_projects_v2.rag.retriever import (
 )
 from turing_projects_v2.security import (
     EXCERPT_LENGTH,
+    InjectionGuard,
+    InjectionSource,
+    LLMInjectionGuard,
     LLMScopeGuard,
     ScopeGuard,
     SecurityEventType,
@@ -85,6 +88,14 @@ OFF_TOPIC_ANSWER = (
     "Sorry, I can only help with job search and job applications: finding Job Postings, "
     "explaining jobs and companies, writing Cover Letters and job market statistics."
 )
+
+BLOCKED_INJECTION: dict[InjectionSource, str] = {
+    "message": "Your message was blocked: it tries to change the assistant's instructions. It "
+    "was logged. Please ask your job search question without such instructions.",
+    "job_ad": "The job ad was blocked: it contains instructions aimed at AI assistants. It was "
+    "logged and not saved. Please paste the ad without them.",
+}
+"""What the candidate is told when the Injection Guard blocks their message or job ad."""
 
 
 class TextEvent(BaseModel):
@@ -269,6 +280,7 @@ class ChatService:
         profile: CandidateProfile,
         *,
         scope_guard: ScopeGuard,
+        injection_guard: InjectionGuard,
         reranker: Reranker | None = None,
         default_search: SearchSettings | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
@@ -283,6 +295,7 @@ class ChatService:
         self._store = store
         self._profile = profile
         self._scope_guard = scope_guard
+        self._injection_guard = injection_guard
         self._agent = build_agent(
             llm,
             [
@@ -331,14 +344,34 @@ class ChatService:
             if problem is not None:
                 yield self._security_event(conversation_id, "rejected_input", problem, job_ad)
                 return
-            if looks_like_injection(job_ad):
+        usage_events: queue.SimpleQueue[UsageEvent] = queue.SimpleQueue()
+        turn_id = uuid4().hex  # also the question message's ID, which links usage to its answer
+        recorder = _UsageRecorder(conversation_id, turn_id, self._store, usage_events)
+        checked: list[tuple[InjectionSource, str]] = []
+        if job_ad is not None:
+            checked.append(("job_ad", job_ad))
+        if message != PASTED_AD_MESSAGE:  # our own text for an ad sent without a message
+            checked.append(("message", message))
+        for source, text in checked:
+            try:
+                verdict = self._injection_guard.check(text, source, {"callbacks": [recorder]})
+            except AppError as error:
+                yield ErrorEvent(message=error.user_message)
+                return
+            if verdict.injection:
                 yield self._security_event(
-                    conversation_id,
-                    "prompt_injection",
-                    "The job ad contains phrases often used to manipulate chatbots. It was "
-                    "flagged and logged; the assistant treats the ad as data only.",
-                    job_ad,
+                    conversation_id, "prompt_injection", BLOCKED_INJECTION[source], text
                 )
+                yield from _drained(usage_events)
+                return
+        if job_ad is not None and looks_like_injection(job_ad):
+            yield self._security_event(
+                conversation_id,
+                "prompt_injection",
+                "The job ad contains phrases often used to manipulate chatbots. It was "
+                "flagged and logged; the assistant treats the ad as data only.",
+                job_ad,
+            )
         if looks_like_injection(message):
             yield self._security_event(
                 conversation_id,
@@ -347,9 +380,6 @@ class ChatService:
                 "and logged; the assistant still follows its rules.",
                 message,
             )
-        usage_events: queue.SimpleQueue[UsageEvent] = queue.SimpleQueue()
-        turn_id = uuid4().hex  # also the question message's ID, which links usage to its answer
-        recorder = _UsageRecorder(conversation_id, turn_id, self._store, usage_events)
         try:
             in_scope = self._scope_guard.check(message, {"callbacks": [recorder]}).on_topic
         except AppError as error:
@@ -522,6 +552,7 @@ def open_chat_service(settings: Settings) -> ChatService:
         open_judge(settings),
         load_profile(settings.candidate_dir),
         scope_guard=LLMScopeGuard(llm),
+        injection_guard=LLMInjectionGuard(llm),
         reranker=CrossEncoderReranker(),
         default_search=SearchSettings(embedding_model=settings.embedding_model),
         checkpointer=open_checkpointer(settings.conversations_path),

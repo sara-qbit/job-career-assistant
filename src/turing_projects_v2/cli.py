@@ -24,6 +24,7 @@ from turing_projects_v2.rag.indexer import (
 )
 from turing_projects_v2.rag.reranker import CrossEncoderReranker
 from turing_projects_v2.rag.retriever import search_jobs
+from turing_projects_v2.security import LLMInjectionGuard
 from turing_projects_v2.store import JobStore
 from turing_projects_v2.tagging import load_title_variants, tag_postings
 from turing_projects_v2.tools.jobs import job_tools
@@ -113,11 +114,16 @@ def search(settings: Settings, question: str, embedding_model: str | None) -> No
 
 
 def evaluate(settings: Settings, step: str, workers: int) -> None:
-    """run an evaluation step: generate (test-set questions), agent, fields or rag"""
+    """run an evaluation step: generate (test-set questions), agent, fields, injection or rag"""
     # Imported here: RAGAs and the evaluation code load slowly and only this command needs them.
     from turing_projects_v2.evaluation import live
     from turing_projects_v2.evaluation.agent import load_agent_cases, run_agent_evaluation
     from turing_projects_v2.evaluation.fields import run_field_evaluation
+    from turing_projects_v2.evaluation.injection import (
+        injection_report,
+        load_injection_cases,
+        run_injection_evaluation,
+    )
     from turing_projects_v2.evaluation.rag import RagConfig, run_rag_evaluation
 
     store = JobStore(settings.database_path)
@@ -129,6 +135,11 @@ def evaluate(settings: Settings, step: str, workers: int) -> None:
         return
     if step == "fields":
         run = run_field_evaluation(store)
+    elif step == "injection":
+        guard = LLMInjectionGuard(chat_model(settings, settings.agent_model))
+        run = run_injection_evaluation(store, load_injection_cases(), guard)
+        print("\n".join(injection_report(run)))
+        return
     elif step == "agent":
         llm = chat_model(settings, settings.agent_model)
         tools = [
@@ -200,7 +211,9 @@ def main() -> None:
         choices=EMBEDDING_MODELS,
         help="embedding model; default from settings",
     )
-    parsers["evaluate"].add_argument("step", choices=["generate", "agent", "fields", "rag"])
+    parsers["evaluate"].add_argument(
+        "step", choices=["generate", "agent", "fields", "injection", "rag"]
+    )
     parsers["evaluate"].add_argument(
         "--workers", type=int, default=4, help="questions evaluated at a time (rag)"
     )

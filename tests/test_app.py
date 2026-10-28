@@ -97,7 +97,7 @@ def test_sidebar_starts_with_gemini_and_the_reranker_on():
 def test_sidebar_shows_the_app_version():
     app = AppTest.from_file(str(APP), default_timeout=30).run()
 
-    assert "Job Career Assistant v2.0" in [caption.value for caption in app.sidebar.caption]
+    assert "Job Career Assistant v3.0" in [caption.value for caption in app.sidebar.caption]
 
 
 def test_sidebar_choices_are_used_for_the_search(tmp_path, monkeypatch):

@@ -192,6 +192,8 @@ st.markdown(
     "and control characters are rejected.\n"
     f"- **Prompt-injection check:** {len(INJECTION_PATTERNS)} patterns; matches are flagged and "
     "logged, and the system prompt's rules still apply.\n"
+    "- **Injection Guard:** an LLM check blocks messages and job ads that try to change the "
+    "assistant's instructions; it cannot be switched off.\n"
     "- **Scope guard:** an LLM check refuses requests that are not about job search.\n"
     f"- **Tool-call cap:** at most {settings.max_tool_calls} tool calls per question.\n"
     f"- **Memory window:** only the last {settings.history_window} messages reach the LLM.\n"
@@ -355,3 +357,18 @@ if fields_run:
             hide_index=True,
             alt="Which exact fields each saved Cover Letter contains",
         )
+
+injection_run = next((run for run in reversed(runs) if run.kind == "injection"), None)
+if injection_run:
+    st.markdown(
+        f"**Injection Guard** ({injection_run.config.get('attacks', 0)} attacks and "
+        f"{injection_run.config.get('honest', 0)} honest inputs, messages and job ads)"
+    )
+    with st.container(horizontal=True):
+        for name, value in injection_run.metrics.items():
+            st.metric(name.capitalize(), "-" if value is None else f"{value:.0%}", border=True)
+    st.dataframe(
+        pd.DataFrame(injection_run.cases),
+        hide_index=True,
+        alt="Which labelled inputs the Injection Guard blocked",
+    )

@@ -52,6 +52,10 @@ _Avoid_: Saved Job, bookmarked job, Bewerbung (except in the Application Table i
 The one German PDF table of all the candidate's Applications so far, each row dated with its application date, for the candidate's Berater at the Arbeitsagentur.
 _Avoid_: Report, list, Bewerbungsliste
 
+**Injection Guard**:
+The LLM check that blocks a typed message or a pasted job ad trying to change the assistant's (or another AI's) instructions, before the agent sees it. Unlike the regex injection flag, it blocks; unlike the scope guard, it judges intent to manipulate, not topic.
+_Avoid_: classifier, filter, prompt-injection check (that is the regex flag)
+
 **Cover Letter**:
 The Letter Template filled in for one specific Job Posting.
 _Avoid_: Motivation Letter, recommendation letter, application letter
