@@ -17,6 +17,9 @@ The app has two pages: **MAIN**, the chat, and **Evaluation**, everything behind
 > v3: an LLM Injection Guard that blocks prompt injection in messages and pasted job ads,
 > measured on a labelled attack set (see [v3: Injection Guard](#v3-injection-guard)).
 
+**Demo:** the supervisor demo page, saved as a PDF: [docs/demo/demo-v2.pdf](docs/demo/demo-v2.pdf)
+(problem and solution, RAG, tools, memory, prompts and security measures, evaluation).
+
 ![MAIN page: a search answer with linked citations, then the verbatim Job Description](docs/images/main-search.png)
 
 | ![Evaluation tab: RAGAs metrics per embedding model, with and without the reranker](docs/images/evaluation-ragas.png) | ![Evaluation tab: a create_job_info tool call with its Job Info card and the judge's verdict](docs/images/evaluation-tool-call.png) |
